@@ -3,13 +3,13 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter, binary_erosion
 
 class BreastRadiometryModelReal:
-    def __init__(self, freq_ghz=3.5, resolution_mm=5):
-        self.freq = freq_ghz * 1e9
+    def __init__(self, freq_ghz=9, resolution_mm=3): #разрешение сетки
+        self.freq = freq_ghz * 1e9 # частота антенны
         self.c = 3e8
         self.lambda0 = self.c / self.freq
         self.res = resolution_mm / 1000.0
         
-        self.tissue_props = {
+        self.tissue_props = { # параметры слоев и опухоли
             'fat': {
                 'mean_eps': 10.5, 'std_eps': 1.5, 
                 'mean_cond': 0.15, 'std_cond': 0.05, 
@@ -34,7 +34,7 @@ class BreastRadiometryModelReal:
         temp_map = np.ones(shape) * props['temp']
         return eps_map, cond_map, temp_map
 
-    def create_anatomical_phantom(self, shape=(60, 80), tumor_radius=8):
+    def create_anatomical_phantom(self, shape=(80, 100), tumor_radius=12): ## область, азмер опухоли
         h, w = shape
         eps_map = np.zeros(shape)
         cond_map = np.zeros(shape)
@@ -126,7 +126,7 @@ class BreastRadiometryModelReal:
             
         weight_sum[weight_sum == 0] = 1.0
         recon_field /= weight_sum
-        recon_field = gaussian_filter(recon_field, sigma=3.0)
+        recon_field = gaussian_filter(recon_field, sigma=2) ## сглаживание 
         
         valid_data = recon_field[mask]
         if len(valid_data) > 0:
@@ -192,7 +192,7 @@ def plot_sensitivity_kernels(model, breast_mask, scan_positions, n_show=5):
         kernel = model.compute_sensitivity_kernel(breast_mask, pos)
         
         im = ax.imshow(kernel, cmap='viridis', vmin=0, vmax=np.max(kernel)*1.2)
-        ax.plot(pos[1], pos[0], 'r*', markersize=15, label='Антенна')
+        ax.plot(pos[1], pos[0], '.', markersize=2)
         ax.set_title(f'Антенна #{idx+1}\nПозиция: ({pos[0]}, {pos[1]})', fontsize=10)
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
@@ -434,8 +434,8 @@ if __name__ == "__main__":
     
     # 3. Настройка сканирования
     h, w = temp_true.shape
-    scan_y = int(h * 0.35)
-    x_pos = np.linspace(int(w * 0.2), int(w * 0.8), 18, dtype=int)
+    scan_y = int(h * 0.3) # позиция сканера
+    x_pos = np.linspace(int(w * 0.2), int(w * 0.8), 10, dtype=int) # rjk-dj fyntyy
     scan_grid = [(scan_y, x) for x in x_pos]
     
     print(f"📡 Количество антенн: {len(scan_grid)}")
