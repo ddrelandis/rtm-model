@@ -353,8 +353,7 @@ def plot_emissivity_map(eps_map, breast_mask):
     plt.savefig('06_emissivity_map.png', dpi=150, bbox_inches='tight')
     plt.show()
 
-
-def print_full_statistics(temp_true, temp_recon, breast_mask, Tb_data, Tb_noisy, emissivity_avg):
+def print_full_statistics(temp_true, temp_recon, breast_mask, Tb_data, Tb_noisy, emissivity_avg, eps_map, cond_map, model):
     """Полная статистика работы модели"""
     print("\n" + "="*70)
     print("📊 ПОЛНАЯ СТАТИСТИКА РАБОТЫ МОДЕЛИ")
@@ -389,26 +388,35 @@ def print_full_statistics(temp_true, temp_recon, breast_mask, Tb_data, Tb_noisy,
     print("\n🎯 ДЕТЕКЦИЯ ОПУХОЛИ:")
     if hasattr(model, 'tumor_center') and model.tumor_center:
         ty, tx = model.tumor_center
-        tumor_region = (np.arange(temp_true.shape[0])[:, None] - ty)**2 + **(np.arange(temp_true.shape[1]) - tx)2 <= 10**2
-        tumor_true = temp_true[tumor_region]
-        tumor_recon = temp_recon[tumor_region]
-        print(f"   Координаты:         Y={ty}, X={tx}")
-        print(f"   T в опухоли (истина): {tumor_true.mean():.2f} °C")
-        print(f"   T в опухоли (рекон):  {tumor_recon.mean():.2f} °C")
-        print(f"   Контраст опухоли:     {tumor_true.mean() - valid_true.mean():.2f} °C")
+        # Исправлено: используем ogrid для создания сетки координат
+        y_coords, x_coords = np.ogrid[:temp_true.shape[0], :temp_true.shape[1]]
+        tumor_region = (x_coords - tx)**2 + (y_coords - ty)**2 <= 10**2
+        
+        # Проверка, попала ли область опухоли в маску груди
+        if np.sum(tumor_region & breast_mask) > 0:
+            tumor_true = temp_true[tumor_region & breast_mask]
+            tumor_recon = temp_recon[tumor_region & breast_mask]
+            print(f"   Координаты:         Y={ty}, X={tx}")
+            print(f"   T в опухоли (истина): {tumor_true.mean():.2f} °C")
+            print(f"   T в опухоли (рекон):  {tumor_recon.mean():.2f} °C")
+            print(f"   Контраст опухоли:     {tumor_true.mean() - valid_true.mean():.2f} °C")
+        else:
+            print("   Опухоль за пределами груди (ошибка генерации)")
     else:
         print("   Опухоль не была создана")
     
     print("\n" + "="*70)
-
 
 # =============================================================================
 # 🚀 ОСНОВНАЯ ПРОГРАММА
 # =============================================================================
 
 if __name__ == "__main__":
-    # Настройка стиля графиков
-    plt.style.use('seaborn-v0_8-whitegrid')
+    # Настройка стиля графиков (исправлено на универсальный)
+    try:
+        plt.style.use('seaborn-v0_8')
+    except:
+        plt.style.use('default')  # Запасной вариант, если стиль не найден
     
     print("="*70)
     print("🔬 МОДЕЛЬ РАДИОМЕТРИИ МОЛОЧНОЙ ЖЕЛЕЗЫ")
@@ -420,14 +428,14 @@ if __name__ == "__main__":
     # 2. Создание фантома
     print("\n📌 Генерация анатомического фантома...")
     eps_map, cond_map, temp_true, breast_mask = model.create_anatomical_phantom(
-        shape=(80, 100), 
-        tumor_radius=12  # Увеличенный радиус для лучшей видимости
+        shape=(400, 500), 
+        tumor_radius=20
     )
     
     # 3. Настройка сканирования
     h, w = temp_true.shape
-    scan_y = int(h * 0.40)  # Ближе к ткани
-    x_pos = np.linspace(int(w * 0.2), int(w * 0.8), 25, dtype=int)  # Больше антенн
+    scan_y = int(h * 0.35)
+    x_pos = np.linspace(int(w * 0.2), int(w * 0.8), 18, dtype=int)
     scan_grid = [(scan_y, x) for x in x_pos]
     
     print(f"📡 Количество антенн: {len(scan_grid)}")
@@ -436,7 +444,7 @@ if __name__ == "__main__":
     # 4. Прямая задача
     print("\n📡 Выполнение прямого сканирования...")
     Tb_data, emissivity_avg = model.forward_scan(eps_map, cond_map, temp_true, breast_mask, scan_grid)
-    Tb_noisy = Tb_data + np.random.normal(0, 0.10, size=Tb_data.shape)  # Сниженный шум
+    Tb_noisy = Tb_data + np.random.normal(0, 0.10, size=Tb_data.shape)
     
     # 5. Обратная задача
     print("🔄 Реконструкция температуры...")
@@ -452,8 +460,8 @@ if __name__ == "__main__":
     plot_cross_section(temp_true, temp_recon, breast_mask, model.tumor_center)
     plot_emissivity_map(eps_map, breast_mask)
     
-    # 7. Статистика
-    print_full_statistics(temp_true, temp_recon, breast_mask, Tb_data, Tb_noisy, emissivity_avg)
+    # 7. Статистика (передаем все необходимые переменные)
+    print_full_statistics(temp_true, temp_recon, breast_mask, Tb_data, Tb_noisy, emissivity_avg, eps_map, cond_map, model)
     
     print("\n✅ Все графики сохранены в файлы 01_*.png ... 06_*.png")
     print("="*70)
