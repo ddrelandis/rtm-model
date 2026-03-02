@@ -18,7 +18,7 @@ class BreastRadiometryModelReal:
             'gland': {
                 'mean_eps': 48.0, 'std_eps': 6.0, 
                 'mean_cond': 2.6, 'std_cond': 0.4, 
-                'temp': 35.5
+                'temp': 36.5
             },
             'tumor': {
                 'mean_eps': 58.0, 'std_eps': 8.0, 
@@ -428,8 +428,8 @@ if __name__ == "__main__":
     # 2. Создание фантома
     print("\n📌 Генерация анатомического фантома...")
     eps_map, cond_map, temp_true, breast_mask = model.create_anatomical_phantom(
-        shape=(400, 500), 
-        tumor_radius=20
+        shape=(120, 180), 
+        tumor_radius=12
     )
     
     # 3. Настройка сканирования
