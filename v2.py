@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter, binary_erosion
 
+
 class BreastRadiometryModelReal:
     def __init__(self, freq_ghz=3.5, resolution_mm=5):
         self.freq = freq_ghz * 1e9
