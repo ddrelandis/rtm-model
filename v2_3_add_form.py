@@ -26,52 +26,52 @@ class BreastRadiometryModelReal:
             'fat': {
                 'mean_eps': 10.5, 'std_eps': 1.5, 
                 'mean_cond': 0.15, 'std_cond': 0.05, 
-                'temp_base': 34.2, 'temp_offset': 0.0
+                'temp_base': 35.0, 'temp_offset': 0.0
             },
             'fat_subcutaneous': {
                 'mean_eps': 9.5, 'std_eps': 1.2, 
                 'mean_cond': 0.12, 'std_cond': 0.04, 
-                'temp_base': 33.8, 'temp_offset': 0.0
+                'temp_base': 34.8, 'temp_offset': 0.0
             },
             'fat_retromammary': {
                 'mean_eps': 10.0, 'std_eps': 1.3, 
                 'mean_cond': 0.14, 'std_cond': 0.04, 
-                'temp_base': 35.2, 'temp_offset': 0.0
+                'temp_base': 35.0, 'temp_offset': 0.0
             },
             'gland': {
                 'mean_eps': 48.0, 'std_eps': 6.0, 
                 'mean_cond': 2.6, 'std_cond': 0.4, 
-                'temp_base': 34.2, 'temp_offset': 0.8
+                'temp_base': 35.0, 'temp_offset': 0.8
             },
             'gland_ducts': {
                 'mean_eps': 52.0, 'std_eps': 5.0, 
                 'mean_cond': 3.0, 'std_cond': 0.5, 
-                'temp_base': 34.2, 'temp_offset': 1.0
+                'temp_base': 35.0, 'temp_offset': 1.0
             },
             'connective': {
                 'mean_eps': 35.0, 'std_eps': 4.0, 
                 'mean_cond': 1.5, 'std_cond': 0.3, 
-                'temp_base': 34.2, 'temp_offset': 0.3
+                'temp_base': 35.0, 'temp_offset': 0.3
             },
             'tumor': {
                 'mean_eps': 58.0, 'std_eps': 8.0, 
                 'mean_cond': 4.2, 'std_cond': 0.8, 
-                'temp_base': 37.5, 'temp_offset': 0.0
+                'temp_base': 38.0, 'temp_offset': 0.0
             },
             'nipple': {
                 'mean_eps': 52.0, 'std_eps': 5.0, 
                 'mean_cond': 3.0, 'std_cond': 0.5, 
-                'temp_base': 34.2, 'temp_offset': 0.6
+                'temp_base': 35.0, 'temp_offset': 0.6
             },
             'body': {
                 'mean_eps': 50.0, 'std_eps': 5.0, 
                 'mean_cond': 2.0, 'std_cond': 0.3, 
-                'temp_base': 37.0, 'temp_offset': 0.0
+                'temp_base': 35.0, 'temp_offset': 0.0
             },
             'skin': {
                 'mean_eps': 38.0, 'std_eps': 4.0, 
                 'mean_cond': 1.2, 'std_cond': 0.2, 
-                'temp_base': 33.5, 'temp_offset': 0.0
+                'temp_base': 33.8, 'temp_offset': 0.0
             }
         }
 
@@ -330,82 +330,111 @@ class BreastRadiometryModelReal:
             temp_offset_map[body_mask] = offset
             tissue_type_map[body_mask] = 11
         
-        # 6. ТЕМПЕРАТУРНЫЙ ГРАДИЕНТ
+        # =============================================================================
+        # 🌡️ 6. ТЕМПЕРАТУРНЫЙ ГРАДИЕНТ (ИСПРАВЛЕНО — УЧИТЫВАЕМ temp_base!)
+        # =============================================================================
+
+        # 6.1 Расстояние от поверхности
         dist_from_surface = distance_transform_edt(~breast_mask)
         dist_from_surface = dist_from_surface.astype(float)
         dist_from_surface[~breast_mask] = 0
-        
+
         max_dist = dist_from_surface[breast_mask].max()
         if max_dist > 0:
             normalized_depth = dist_from_surface / max_dist
         else:
             normalized_depth = np.zeros_like(dist_from_surface)
-        
-        depth_temp = 33.5 + 3.5 * (normalized_depth ** 0.6)
-        temp_map = depth_temp * breast_mask + temp_offset_map
-        temp_map[~breast_mask] = 20.0
-        
+
+        # 6.2 🔥 Градиент глубины (+0 до +2°C)
+        depth_gradient = 2.0 * (normalized_depth ** 0.6)
+
+        # 6.3 🔥 Применяем градиент ПОВЕРХ temp_base из tissue_props!
+        temp_map = temp_map + depth_gradient * breast_mask
+
+        # 6.4 Добавляем оффсеты (протоки, дольки, сосок теплее)
+        temp_map = temp_map + temp_offset_map * breast_mask
+
+        # 6.5 Небольшой шум для естественности
         noise = np.random.normal(0, 0.08, shape)
         temp_map = temp_map + noise * breast_mask
-        
-        temp_map = gaussian_filter(temp_map, sigma=1.2)
+
+        # 6.6 Сглаживание (минимальное для сохранения различий)
+        temp_map = gaussian_filter(temp_map, sigma=0.8)
         temp_map[~breast_mask] = 20.0
-        temp_map = np.clip(temp_map, 33.0, 39.0)
+
+        # 6.7 Ограничение диапазона
+        temp_map = np.clip(temp_map, 34.0, 39.5)
         temp_map[~breast_mask] = 20.0
+
+        # 🔥 ВОСПАЛЕНИЕ вокруг опухоли — перенесено В раздел 7 (после создания опухоли)!
         
-        # 7. ОПУХОЛЬ
+            # =============================================================================
+        # 🎗️ 7. ОПУХОЛЬ (ИСПРАВЛЕНО)
+        # =============================================================================
+
         self.tumor_center = None
-        
+        tumor_ty, tumor_tx = None, None  # 🔥 Локальные переменные
+
         if tumor_pos is not None:
-            ty, tx = tumor_pos
-            if 0 <= ty < h and 0 <= tx < w:
-                if final_gland_mask[ty, tx]:
-                    print(f"✅ Опухоль создана в заданной позиции: Y={ty}, X={tx}")
+            tumor_ty, tumor_tx = tumor_pos
+            if 0 <= tumor_ty < h and 0 <= tumor_tx < w:
+                if final_gland_mask[tumor_ty, tumor_tx]:
+                    print(f"✅ Опухоль создана в заданной позиции: Y={tumor_ty}, X={tumor_tx}")
                 else:
-                    print(f"⚠️ Позиция ({ty}, {tx}) вне железистой ткани! Коррекция...")
+                    print(f"⚠️ Позиция ({tumor_ty}, {tumor_tx}) вне железистой ткани! Коррекция...")
                     y_coords, x_coords = np.where(final_gland_mask)
                     if len(y_coords) > 0:
-                        dists = np.sqrt((y_coords - ty)**2 + (x_coords - tx)**2)
+                        dists = np.sqrt((y_coords - tumor_ty)**2 + (x_coords - tumor_tx)**2)
                         nearest_idx = np.argmin(dists)
-                        ty, tx = y_coords[nearest_idx], x_coords[nearest_idx]
-                        print(f"✅ Скорректированная позиция: Y={ty}, X={tx}")
+                        tumor_ty, tumor_tx = y_coords[nearest_idx], x_coords[nearest_idx]
+                        print(f"✅ Скорректированная позиция: Y={tumor_ty}, X={tumor_tx}")
                     else:
                         print("⚠️ Не удалось скорректировать позицию")
                         tumor_pos = None
             else:
-                print(f"⚠️ Позиция ({ty}, {tx}) вне сетки! Генерация случайной...")
+                print(f"⚠️ Позиция ({tumor_ty}, {tumor_tx}) вне сетки! Генерация случайной...")
                 tumor_pos = None
-        
+
         if tumor_pos is None:
             valid_y, valid_x = np.where(final_gland_mask & (y > h*0.30) & (y < h*0.65))
             if len(valid_y) > 0:
                 idx = np.random.randint(0, len(valid_y))
-                ty, tx = valid_y[idx], valid_x[idx]
-                print(f"🎲 Опухоль создана в случайной позиции: Y={ty}, X={tx}")
+                tumor_ty, tumor_tx = valid_y[idx], valid_x[idx]
+                print(f"🎲 Опухоль создана в случайной позиции: Y={tumor_ty}, X={tumor_tx}")
             else:
                 print("⚠️ Не удалось найти позицию для опухоли")
                 return eps_map, cond_map, temp_map, breast_mask, areola_mask, nipple_mask, body_mask, tissue_type_map
-        
+
+        # Создаём опухоль
         tumor_y, tumor_x = np.ogrid[:h, :w]
-        dist_from_tumor = np.sqrt((tumor_x - tx)**2 + (tumor_y - ty)**2)
-        
+        dist_from_tumor = np.sqrt((tumor_x - tumor_tx)**2 + (tumor_y - tumor_ty)**2)
+
         tumor_sigma = tumor_radius * 1.5
         tumor_temp_elevation = 2.5 * np.exp(-dist_from_tumor**2 / (2 * tumor_sigma**2))
-        
+
         temp_map = temp_map + tumor_temp_elevation * breast_mask
-        temp_map = np.clip(temp_map, 33.0, 39.5)
+        temp_map = np.clip(temp_map, 34.0, 39.5)
         temp_map = gaussian_filter(temp_map, sigma=1.0)
         temp_map[~breast_mask] = 20.0
-        
+
+        # 🔥 ВОСПАЛЕНИЕ вокруг опухоли (теперь работает!)
+        inflammation_radius = tumor_radius * 3
+        inflammation_effect = 0.5 * np.exp(-dist_from_tumor**2 / (2 * inflammation_radius**2))
+        temp_map = temp_map + inflammation_effect * breast_mask
+        temp_map = np.clip(temp_map, 34.0, 39.5)
+
+        # Диэлектрические свойства опухоли
         tumor_eps_elevation = 15.0 * np.exp(-dist_from_tumor**2 / (2 * tumor_sigma**2))
         eps_map = eps_map + tumor_eps_elevation * breast_mask
         eps_map = gaussian_filter(eps_map, sigma=1.5)
         eps_map[~breast_mask] = 1.0
-        
-        self.tumor_center = (ty, tx)
+
+        # Сохраняем центр опухоли
+        self.tumor_center = (tumor_ty, tumor_tx)
 
         return eps_map, cond_map, temp_map, breast_mask, areola_mask, nipple_mask, body_mask, tissue_type_map
 
+    # ... (остальные методы класса без изменений)
     def compute_sensitivity_kernel(self, mask, ant_pos):
         h, w = mask.shape
         y, x = np.ogrid[:h, :w]
