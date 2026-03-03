@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter, binary_erosion
 # =============================================================================
 
 class BreastRadiometryModelReal:
-    def __init__(self, freq_ghz=3.5, resolution_mm=5):
+    def __init__(self, freq_ghz=3.5, resolution_mm=2):
         self.freq = freq_ghz * 1e9
         self.c = 3e8
         self.lambda0 = self.c / self.freq
@@ -423,14 +423,14 @@ if __name__ == "__main__":
     
     # === ВАРИАНТ 1: Задать координаты вручную ===
     # Формат: (Y, X). Для shape=(80, 100) диапазон Y: 30-70, X: 30-70
-    tumor_position = (55, 50)  # <-- МЕНЯЙТЕ ЭТИ КООРДИНАТЫ
+    tumor_position = (45, 50)  # <-- МЕНЯЙТЕ ЭТИ КООРДИНАТЫ
     
     # === ВАРИАНТ 2: Случайная позиция ===
     # tumor_position = None  # Раскомментируйте, чтобы позиция была случайной
     
     eps_map, cond_map, temp_true, breast_mask = model.create_anatomical_phantom(
         shape=(80, 100), 
-        tumor_radius=12,
+        tumor_radius=8,
         tumor_pos=tumor_position
     )
     
