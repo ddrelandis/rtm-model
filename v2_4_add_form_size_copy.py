@@ -8,7 +8,7 @@ import time
 # =============================================================================
 
 class BreastRadiometryModelReal:
-    def __init__(self, freq_ghz=3.5, resolution_mm=2, birads_category='B', temp_vmin=None, temp_vmax=None):  # 🔥 Новые параметры
+    def __init__(self, freq_ghz=3.5, resolution_mm=2, birads_category='B', temp_vmin=None, temp_vmax=None):
         self.freq = freq_ghz * 1e9
         self.c = 3e8
         self.lambda0 = self.c / self.freq
@@ -22,65 +22,60 @@ class BreastRadiometryModelReal:
             'C': (0.51, 0.75),
             'D': (0.76, 0.90)
         }
-
-        self.temp_vmin = temp_vmin  # Ручная мин. температура
-        self.temp_vmax = temp_vmax  # Ручная макс. температура
         
-        # 🔥 Значения по умолчанию (физиологический диапазон)
-        if self.temp_vmin is None:
-            self.temp_vmin = 33.0
-        if self.temp_vmax is None:
-            self.temp_vmax = 40.0
-
+        self.temp_vmin = temp_vmin if temp_vmin is not None else 33.0
+        self.temp_vmax = temp_vmax if temp_vmax is not None else 40.0
+        
+        # В __init__ замените tissue_props на:
         self.tissue_props = {
             'fat': {
-                'mean_eps': 10.5, 'std_eps': 1.5, 
-                'mean_cond': 0.15, 'std_cond': 0.05, 
+                'mean_eps': 5.0, 'std_eps': 0.5,  # 🔥 Жир: ε≈5 → emissivity≈0.84
+                'mean_cond': 0.10, 'std_cond': 0.03,
                 'temp_base': 35.0, 'temp_offset': 0.0
             },
             'fat_subcutaneous': {
-                'mean_eps': 9.5, 'std_eps': 1.2, 
-                'mean_cond': 0.12, 'std_cond': 0.04, 
+                'mean_eps': 4.5, 'std_eps': 0.4,  # 🔥 Ещё ниже
+                'mean_cond': 0.08, 'std_cond': 0.02,
                 'temp_base': 34.8, 'temp_offset': 0.0
             },
             'fat_retromammary': {
-                'mean_eps': 10.0, 'std_eps': 1.3, 
-                'mean_cond': 0.14, 'std_cond': 0.04, 
+                'mean_eps': 5.0, 'std_eps': 0.5,
+                'mean_cond': 0.10, 'std_cond': 0.03,
                 'temp_base': 35.0, 'temp_offset': 0.0
             },
             'gland': {
-                'mean_eps': 48.0, 'std_eps': 6.0, 
-                'mean_cond': 2.6, 'std_cond': 0.4, 
+                'mean_eps': 45.0, 'std_eps': 5.0,  # Железа: ε≈45
+                'mean_cond': 2.4, 'std_cond': 0.4,
                 'temp_base': 35.0, 'temp_offset': 0.8
             },
             'gland_ducts': {
-                'mean_eps': 52.0, 'std_eps': 5.0, 
-                'mean_cond': 3.0, 'std_cond': 0.5, 
+                'mean_eps': 48.0, 'std_eps': 5.0,
+                'mean_cond': 2.8, 'std_cond': 0.5,
                 'temp_base': 35.0, 'temp_offset': 1.0
             },
             'connective': {
-                'mean_eps': 35.0, 'std_eps': 4.0, 
-                'mean_cond': 1.5, 'std_cond': 0.3, 
+                'mean_eps': 30.0, 'std_eps': 4.0,  # 🔥 Ниже
+                'mean_cond': 1.3, 'std_cond': 0.3,
                 'temp_base': 35.0, 'temp_offset': 0.3
             },
             'tumor': {
-                'mean_eps': 58.0, 'std_eps': 8.0, 
-                'mean_cond': 4.2, 'std_cond': 0.8, 
+                'mean_eps': 55.0, 'std_eps': 7.0,
+                'mean_cond': 4.0, 'std_cond': 0.8,
                 'temp_base': 38.0, 'temp_offset': 0.0
             },
             'nipple': {
-                'mean_eps': 52.0, 'std_eps': 5.0, 
-                'mean_cond': 3.0, 'std_cond': 0.5, 
+                'mean_eps': 45.0, 'std_eps': 5.0,
+                'mean_cond': 2.6, 'std_cond': 0.5,
                 'temp_base': 35.0, 'temp_offset': 0.6
             },
             'body': {
-                'mean_eps': 50.0, 'std_eps': 5.0, 
-                'mean_cond': 2.0, 'std_cond': 0.3, 
+                'mean_eps': 50.0, 'std_eps': 5.0,
+                'mean_cond': 2.0, 'std_cond': 0.3,
                 'temp_base': 35.0, 'temp_offset': 0.0
             },
             'skin': {
-                'mean_eps': 38.0, 'std_eps': 4.0, 
-                'mean_cond': 1.2, 'std_cond': 0.2, 
+                'mean_eps': 35.0, 'std_eps': 4.0,
+                'mean_cond': 1.0, 'std_cond': 0.2,
                 'temp_base': 33.8, 'temp_offset': 0.0
             }
         }
@@ -458,48 +453,87 @@ class BreastRadiometryModelReal:
         return sensitivity
 
     def compute_emissivity(self, eps_map):
+        """
+        🔥 ИСПРАВЛЕНО: Реалистичный emissivity для биотканей
+        """
         sqrt_eps = np.sqrt(np.maximum(eps_map, 1.0))
         gamma = (sqrt_eps - 1.0) / (sqrt_eps + 1.0)
-        return 1.0 - gamma**2
+        emissivity = 1.0 - gamma**2
+        
+        # 🔥 Расширить диапазон (0.75 слишком высоко!)
+        emissivity = np.clip(emissivity, 0.70, 0.99)  # ✅ Было 0.75-0.98
+        
+        return emissivity
 
     def forward_scan(self, eps_map, cond_map, temp_map, mask, scan_positions):
+        """
+        🔥 ИСПРАВЛЕНО: Конвертация °C → Кельвины ПЕРЕД расчётом Tb!
+        """
         measurements = []
         emissivity_avg = []
+        
+        # 🔥 ГЛАВНОЕ ИСПРАВЛЕНИЕ: конвертация в Кельвины!
+        temp_map_kelvin = temp_map + 273.15
+        
+        # 🔥 DEBUG вывод
+        print(f"   🔍 [DEBUG] temp_map диапазон: {temp_map[mask].min():.2f} — {temp_map[mask].max():.2f} °C")
+        print(f"   🔍 [DEBUG] temp_map_kelvin диапазон: {temp_map_kelvin[mask].min():.2f} — {temp_map_kelvin[mask].max():.2f} K")
+        
+        emissivity = self.compute_emissivity(eps_map)
+        
+        # 🔥 DEBUG emissivity
+        print(f"   🔍 [DEBUG] emissivity диапазон: {emissivity[mask].min():.3f} — {emissivity[mask].max():.3f}")
+        
         for pos in scan_positions:
             kernel = self.compute_sensitivity_kernel(mask, pos)
-            emissivity = self.compute_emissivity(eps_map)
-            emissivity_avg.append(np.sum(kernel * emissivity))
-            Tb = np.sum(kernel * temp_map * emissivity)
+            emissivity_local = np.sum(kernel * emissivity)
+            emissivity_avg.append(emissivity_local)
+            
+            # 🔥 ИСПОЛЬЗУЕМ temp_map_kelvin, НЕ temp_map!
+            Tb = np.sum(kernel * emissivity * temp_map_kelvin)  # ✅ ИСПРАВЛЕНО!
             measurements.append(Tb)
+        
         return np.array(measurements), np.array(emissivity_avg)
 
     def reconstruct_simple(self, measurements, emissivity_avg, scan_positions, shape, mask):
-        recon_field = np.zeros(shape)
+        """
+        🔥 ИСПРАВЛЕНО: Реконструкция с конвертацией K → °C
+        """
+        recon_field_kelvin = np.zeros(shape)
         weight_sum = np.zeros(shape)
         
         for i, pos in enumerate(scan_positions):
             kernel = self.compute_sensitivity_kernel(mask, pos)
-            emissivity_corr = emissivity_avg[i] if emissivity_avg[i] > 0.1 else 0.5
+            
+            # 🔥 Emissivity ~0.95, порог 0.5 (не 0.1!)
+            emissivity_corr = emissivity_avg[i] if emissivity_avg[i] > 0.5 else 0.95
+            
+            # Tb в Кельвинах → делим на emissivity
             Tb_corrected = measurements[i] / emissivity_corr
-            recon_field += kernel * Tb_corrected
+            
+            recon_field_kelvin += kernel * Tb_corrected
             weight_sum += kernel
             
         weight_sum[weight_sum == 0] = 1.0
-        recon_field /= weight_sum
+        recon_field_kelvin /= weight_sum
+        
+        # 🔥 Конвертация K → °C
+        recon_field = recon_field_kelvin - 273.15
+        
+        # Сглаживание
         recon_field = gaussian_filter(recon_field, sigma=2.0)
         
-        # 🔥 ОБРЕЗАНИЕ до физиологического диапазона!
-        recon_field = np.clip(recon_field, self.temp_vmin - 5, self.temp_vmax + 5)
-        
+        # 🔥 Мягкая нормализация
         valid_data = recon_field[mask]
         if len(valid_data) > 0:
-            min_t, max_t = np.percentile(valid_data, [5, 95])
+            min_t, max_t = np.percentile(valid_data, [2, 98])
             if max_t > min_t:
-                recon_field = 35.0 + (recon_field - min_t) / (max_t - min_t) * 4.0
+                recon_field = np.clip(recon_field, min_t - 1, max_t + 1)
         
-        # 🔥 ФИНАЛЬНОЕ обрезание после нормализации
-        recon_field = np.clip(recon_field, self.temp_vmin, self.temp_vmax)
+        # 🔥 Финальное обрезание
+        recon_field = np.clip(recon_field, self.temp_vmin - 2, self.temp_vmax + 2)
         recon_field[~mask] = np.nan
+        
         return recon_field
 # =============================================================================
 # 📊 ФУНКЦИИ ВИЗУАЛИЗАЦИИ (ВСЕ!)
@@ -1084,7 +1118,8 @@ if __name__ == "__main__":
     
     print("\n📡 Выполнение прямого сканирования...")
     Tb_data, emissivity_avg = model.forward_scan(eps_map, cond_map, temp_true, breast_mask, scan_grid)
-    
+
+    # 🔍 Диагностика Tb по позициям:
     print("\n🔍 Диагностика Tb по позициям:")
     for i, (pos, tb) in enumerate(zip(scan_grid, Tb_data)):
         print(f"   Антенна {i+1:2d}: X={pos[1]:3d}, Tb={tb:.2f} K ({tb-273.15:.2f}°C)")
@@ -1092,17 +1127,33 @@ if __name__ == "__main__":
     print(f"\n   🔴 Мин Tb: {Tb_data.min():.2f} K (позиция {np.argmin(Tb_data)+1})")
     print(f"   🟢 Макс Tb: {Tb_data.max():.2f} K (позиция {np.argmax(Tb_data)+1})")
 
-    # Проверка физичности
-    center_idx = len(Tb_data) // 2
-    edge_tb = np.mean([Tb_data[0], Tb_data[-1]])
-    center_tb = Tb_data[center_idx]
+    # 🔥 ПРАВИЛЬНАЯ диагностика
+    print("\n🔍 Диагностика Tb (в Кельвинах):")
+    print(f"   Мин Tb: {Tb_data.min():.2f} K ({Tb_data.min() - 273.15:.2f}°C)")
+    print(f"   Макс Tb: {Tb_data.max():.2f} K ({Tb_data.max() - 273.15:.2f}°C)")
+    print(f"   Среднее Tb: {Tb_data.mean():.2f} K ({Tb_data.mean() - 273.15:.2f}°C)")
+    print(f"   Emissivity: {emissivity_avg.mean():.3f} ± {emissivity_avg.std():.3f}")
 
-    print(f"\n   Центр: {center_tb:.2f} K, Края: {edge_tb:.2f} K")
-    if center_tb > edge_tb:
-        print("   ✅ ФИЗИЧЕСКИ ВЕРНО (центр теплее краёв)")
+    # 🔥 ПРАВИЛЬНАЯ проверка (исправьте диапазон!)
+    if Tb_data.min() < 300 or Tb_data.max() > 320:
+        print("   ❌ ВНИМАНИЕ: Tb вне физиологического диапазона (300-320 K)!")
+        print("   ⚠️ Проверьте конвертацию °C → K в forward_scan()!")
     else:
-        print("   ❌ ФИЗИЧЕСКИ НЕВЕРНО (нужно исправить нормализацию!)")    
-        Tb_noisy = Tb_data + np.random.normal(0, 0.10, size=Tb_data.shape)
+        print("   ✅ Tb в физиологическом диапазоне (300-320 K)")
+
+    # Проверка emissivity
+    if emissivity_avg.mean() < 0.90:
+        print("   ⚠️ Emissivity слишком низкий! Проверьте compute_emissivity()")
+    else:
+        print("   ✅ Emissivity в норме (0.90-0.99)")
+
+    # Проверка вариации emissivity
+    if emissivity_avg.std() < 0.01:
+        print("   ⚠️ Emissivity без вариации! Проверьте неоднородность тканей")
+    else:
+        print("   ✅ Emissivity имеет вариацию")
+
+    Tb_noisy = Tb_data + np.random.normal(0, 0.50, size=Tb_data.shape)  # 🔥 Шум 0.5 K
     
     print("🔄 Реконструкция температуры...")
 
