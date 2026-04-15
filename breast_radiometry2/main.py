@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')  # ⚡ Должно быть СТРОГО ДО импорта pyplot
+#matplotlib.use('Agg')  # ⚡ Должно быть СТРОГО ДО импорта pyplot
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter, binary_erosion, binary_dilation, distance_transform_edt
 import time
@@ -29,7 +29,7 @@ if __name__ == "__main__":
         'ultra':  {'shape': (480, 600), 'tumor_radius': 20, 'resolution_mm': 0.5}
     }
 
-    quality = 'high'
+    quality = 'medium'
     preset = RESOLUTION_PRESETS[quality]
     print(f"\n📐 Режим: {quality.upper()} ({preset['shape'][0]}×{preset['shape'][1]} пикселей)")
 

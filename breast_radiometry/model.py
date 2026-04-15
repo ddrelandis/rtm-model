@@ -270,7 +270,7 @@ class BreastRadiometryModelReal:
         gamma = (sqrt_eps - 1.0) / (sqrt_eps + 1.0)
         emissivity_fresnel = 1.0 - gamma**2
         emissivity = 0.88 + 0.11 * (emissivity_fresnel - 0.5) / 0.5
-        emissivity = np.clip(emissivity, 0.92, 0.99)
+        emissivity = np.clip(emissivity, 0.98, 0.99)
         np.random.seed(42)
         noise = np.random.normal(0, 0.015, emissivity.shape)
         emissivity = np.clip(emissivity + noise * mask if mask is not None else emissivity + noise, 0.90, 0.99)
