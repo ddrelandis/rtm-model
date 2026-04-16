@@ -301,4 +301,4 @@ def plot_antenna_coverage(breast_mask, scan_positions, model, temp_recon=None, f
     plt.tight_layout()
     plt.savefig(filename, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"✅ График покрытия антенн сохранён: {filename}")
+    print(f"График покрытия антенн сохранён: {filename}")
