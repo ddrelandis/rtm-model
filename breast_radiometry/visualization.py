@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 def plot_main_results(temp_true, temp_recon, breast_mask, tumor_center=None,
                       areola_mask=None, nipple_mask=None, body_mask=None,
-                      temp_vmin=33.0, temp_vmax=40.0):
+                      temp_vmin=34.0, temp_vmax=39.0):
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     for ax in axes: ax.set_facecolor('0.95')
     
@@ -26,7 +26,7 @@ def plot_main_results(temp_true, temp_recon, breast_mask, tumor_center=None,
     plt.colorbar(im2, ax=axes[1], label='Температура (°C)').set_ticks(np.linspace(temp_vmin, temp_vmax, 8))
     recon_valid = temp_recon[breast_mask]
     if np.any(recon_valid < temp_vmin) or np.any(recon_valid > temp_vmax):
-        print(f"⚠️ ВНИМАНИЕ: Обнаружены значения вне диапазона! Мин: {np.nanmin(recon_valid):.2f}°C, Макс: {np.nanmax(recon_valid):.2f}°C")
+        print(f"ВНИМАНИЕ: Обнаружены значения вне диапазона! Мин: {np.nanmin(recon_valid):.2f}°C, Макс: {np.nanmax(recon_valid):.2f}°C")
 
     diff = np.abs(temp_true - temp_recon)
     diff[~breast_mask] = np.nan
@@ -37,8 +37,8 @@ def plot_main_results(temp_true, temp_recon, breast_mask, tumor_center=None,
     
     plt.tight_layout()
     plt.savefig('01_main_results.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅ Заменено на close()
-    print(f"\n📊 Диапазоны температур:\n   Истинное T:     {np.min(temp_true[breast_mask]):.2f} — {np.max(temp_true[breast_mask]):.2f}°C\n   Реконструированное: {np.nanmin(temp_recon[breast_mask]):.2f} — {np.nanmax(temp_recon[breast_mask]):.2f}°C\n   Ошибка:         0.00 — {vmax_err:.2f}°C")
+    plt.show()  #  графики без отображения
+    print(f"\nДиапазоны температур:\n   Истинное T:     {np.min(temp_true[breast_mask]):.2f} — {np.max(temp_true[breast_mask]):.2f}°C\n   Реконструированное: {np.nanmin(temp_recon[breast_mask]):.2f} — {np.nanmax(temp_recon[breast_mask]):.2f}°C\n   Ошибка:         0.00 — {vmax_err:.2f}°C")
 
 def plot_tissue_composition(tissue_type_map, breast_mask, areola_mask, nipple_mask, body_mask, birads_category):
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
@@ -54,7 +54,7 @@ def plot_tissue_composition(tissue_type_map, breast_mask, areola_mask, nipple_ma
     axes[1].set_title('Распределение тканей (%)', fontsize=12, fontweight='bold')
     plt.tight_layout()
     plt.savefig('07_tissue_composition.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅
+    plt.close()  
 
 def plot_breast_anatomy(eps_map, breast_mask, areola_mask, nipple_mask, body_mask):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -74,7 +74,7 @@ def plot_breast_anatomy(eps_map, breast_mask, areola_mask, nipple_mask, body_mas
     plt.colorbar(im2, ax=axes[1], label='Тип ткани')
     plt.tight_layout()
     plt.savefig('08_breast_anatomy.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅
+    plt.close()  
 
 def plot_temperature_gradient(temp_map, breast_mask, tumor_center=None):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -99,7 +99,7 @@ def plot_temperature_gradient(temp_map, breast_mask, tumor_center=None):
     axes[1].legend(); axes[1].grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig('09_temperature_gradient.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅
+    plt.close()  
 
 def plot_temperature_contours(temp_map, breast_mask, tumor_center=None):
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
@@ -115,7 +115,7 @@ def plot_temperature_contours(temp_map, breast_mask, tumor_center=None):
     plt.colorbar(im, ax=ax, label='Температура (°C)').set_ticks(np.linspace(vmin_temp, vmax_temp, 6))
     plt.tight_layout()
     plt.savefig('10_temperature_contours.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅
+    plt.close()  
 
 def plot_temperature_difference_map(temp_map, tissue_type_map, breast_mask):
     fig, axes = plt.subplots(1, 2, figsize=(16, 5))
@@ -135,7 +135,7 @@ def plot_temperature_difference_map(temp_map, tissue_type_map, breast_mask):
     axes[1].legend(); axes[1].grid(True, alpha=0.3, axis='y'); axes[1].set_ylim(avg_temp - 2, avg_temp + 2)
     plt.tight_layout()
     plt.savefig('11_temperature_difference.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅
+    plt.close()  
 
 def plot_sensitivity_kernels(model, breast_mask, scan_positions, n_show=5):
     fig, axes = plt.subplots(1, n_show, figsize=(20, 4))
@@ -151,7 +151,7 @@ def plot_sensitivity_kernels(model, breast_mask, scan_positions, n_show=5):
     plt.suptitle('Функции чувствительности антенн', fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig('02_sensitivity_kernels.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅
+    plt.close()  
 
 def plot_measurement_data(Tb_data, Tb_noisy, emissivity_avg, scan_positions):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -166,20 +166,38 @@ def plot_measurement_data(Tb_data, Tb_noisy, emissivity_avg, scan_positions):
     axes[1].axhline(y=emissivity_avg.mean(), color='r', linestyle='--', label=f'Среднее: {emissivity_avg.mean():.3f}'); axes[1].legend(loc='best')
     plt.tight_layout()
     plt.savefig('03_measurement_data.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅
+    plt.close()  
 
 def plot_temperature_histogram(temp_true, temp_recon, breast_mask):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    true_vals, recon_vals = temp_true[breast_mask], temp_recon[breast_mask]
-    for ax, vals, color, title in zip(axes, [true_vals, recon_vals], ['steelblue', 'coral'], ['Распределение истинных температур', 'Распределение реконструированных температур']):
-        ax.hist(vals, bins=30, color=color, edgecolor='black', alpha=0.7)
-        ax.axvline(vals.mean(), color='red', linestyle='--', linewidth=2, label=f'Среднее: {vals.mean():.2f}°C')
-        ax.set_xlabel('Температура (°C)', fontsize=11); ax.set_ylabel('Количество пикселей', fontsize=11)
-        ax.set_title(f'{title}\n[{vals.min():.1f}°C — {vals.max():.1f}°C]', fontsize=12, fontweight='bold')
-        ax.legend(); ax.grid(True, alpha=0.3)
+    true_vals = temp_true[breast_mask]
+    recon_vals = temp_recon[breast_mask]
+    
+    hist_range1 = (34.0, 39.0)  
+    hist_range2 = (35.0, 38.0)  
+    # Гистограмма истинных температур
+    axes[0].hist(true_vals, bins=30, range=hist_range1, 
+                 color='steelblue', edgecolor='black', alpha=0.7)
+    axes[0].axvline(true_vals.mean(), color='red', linestyle='--', linewidth=2, 
+                    label=f'Среднее: {true_vals.mean():.2f}°C')
+    axes[0].set_xlabel('Температура (°C)', fontsize=11)
+    axes[0].set_ylabel('Количество пикселей', fontsize=11)
+    axes[0].set_title(f'Распределение истинных температур', fontsize=12, fontweight='bold')
+    axes[0].legend(); axes[0].grid(True, alpha=0.3)
+    
+    # Гистограмма реконструированных температур
+    axes[1].hist(recon_vals, bins=30, range=hist_range2, 
+                 color='coral', edgecolor='black', alpha=0.7)
+    axes[1].axvline(recon_vals.mean(), color='red', linestyle='--', linewidth=2, 
+                    label=f'Среднее: {recon_vals.mean():.2f}°C')
+    axes[1].set_xlabel('Температура (°C)', fontsize=11)
+    axes[1].set_ylabel('Количество пикселей', fontsize=11)
+    axes[1].set_title(f'Распределение реконструированных температур', fontsize=12, fontweight='bold')
+    axes[1].legend(); axes[1].grid(True, alpha=0.3)
+    
     plt.tight_layout()
     plt.savefig('04_temperature_histogram.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅
+    plt.close()
 
 def plot_cross_section(temp_true, temp_recon, breast_mask, tumor_center=None):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -203,7 +221,7 @@ def plot_cross_section(temp_true, temp_recon, breast_mask, tumor_center=None):
         for ax in axes: ax.axis('off'); ax.text(0.5, 0.5, 'Опухоль не найдена', ha='center', va='center', fontsize=14, transform=ax.transAxes)
     plt.tight_layout()
     plt.savefig('05_cross_section.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅
+    plt.close()  
 
 def plot_emissivity_map(eps_map, breast_mask):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -218,4 +236,69 @@ def plot_emissivity_map(eps_map, breast_mask):
     plt.colorbar(im2, ax=axes[1], label='Emissivity').set_ticks([0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
     plt.tight_layout()
     plt.savefig('06_emissivity_map.png', dpi=150, bbox_inches='tight')
-    plt.close()  # ✅
+    plt.close()  
+
+def plot_antenna_coverage(breast_mask, scan_positions, model, temp_recon=None, filename='15_antenna_coverage.png'):
+    """
+    Визуализация покрытия антенн: позиции + направление + зона чувствительности.
+    
+    Параметры:
+    - breast_mask: бинарная маска груди
+    - scan_positions: список кортежей (y, x) с позициями антенн
+    - model: объект BreastRadiometryModelReal (для вычисления ядер)
+    - temp_recon: опционально, реконструированная температура для фона
+    - filename: имя сохраняемого файла
+    """
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Фон: либо маска, либо реконструированная температура
+    if temp_recon is not None:
+        display = temp_recon.copy()
+        display[~breast_mask] = np.nan
+        im = ax.imshow(display, cmap='jet', vmin=33.0, vmax=40.0, alpha=0.7, interpolation='gaussian')
+        plt.colorbar(im, ax=ax, label='T (°C)', fraction=0.046, pad=0.04)
+    else:
+        ax.imshow(breast_mask, cmap='gray', alpha=0.3)
+    
+    # Контур груди
+    from scipy.ndimage import binary_erosion
+    boundary = binary_erosion(breast_mask, iterations=2) ^ breast_mask
+    ax.contour(boundary, colors='black', linewidths=1.5, alpha=0.8)
+    
+    # Отрисовка антенн и их ядер чувствительности
+    for i, (y, x) in enumerate(scan_positions):
+        # Маркер позиции антенны
+        ax.plot(x, y, 'r*', markersize=12, markeredgewidth=2, label='Антенна' if i==0 else "")
+        
+        # Вычисляем ядро чувствительности для этой антенны
+        kernel = model.compute_sensitivity_kernel(breast_mask, (y, x))
+        
+        # Нормируем для визуализации (берем верхние 30% значений)
+        kernel_vis = kernel.copy()
+        threshold = np.percentile(kernel_vis[kernel_vis > 0], 70)
+        kernel_vis[kernel_vis < threshold] = 0
+        
+        # Отображаем зону чувствительности как полупрозрачный контур
+        if np.any(kernel_vis > 0):
+            # Создаем контуры для ядра
+            levels = np.linspace(threshold, kernel_vis.max(), 3)
+            ax.contour(kernel_vis, levels=levels, colors='red', linewidths=0.8, alpha=0.6,
+                      extent=[0, kernel_vis.shape[1], kernel_vis.shape[0], 0])
+        
+        # Стрелка направления (антенна "смотрит" вглубь ткани, т.е. вниз по оси Y)
+        arrow_len = 15  # длина стрелки в пикселях
+        ax.arrow(x, y, 0, arrow_len, head_width=3, head_length=5, 
+                fc='red', ec='red', alpha=0.7, linewidth=1.5)
+    
+    # Настройки графика
+    ax.set_xlabel('X (пиксели)', fontsize=11)
+    ax.set_ylabel('Y (пиксели)', fontsize=11)
+    ax.set_title(f'Покрытие антеннами ({len(scan_positions)} шт.)', fontsize=14, fontweight='bold')
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.2, linestyle='--')
+    ax.set_aspect('equal')
+    
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"✅ График покрытия антенн сохранён: {filename}")

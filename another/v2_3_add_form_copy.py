@@ -1,19 +1,19 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter, binary_erosion, binary_dilation, distance_transform_edt
-import time
-import imageio.v2 as imageio  # Используем v2 API для совместимости
-##### Исправлены значения яркостной температуры
+
 # =============================================================================
 # 🏗️ КЛАСС МОДЕЛИ
 # =============================================================================
 
 class BreastRadiometryModelReal:
-    def __init__(self, freq_ghz=3.5, resolution_mm=2, birads_category='B', temp_vmin=None, temp_vmax=None):
+    def __init__(self, freq_ghz=3.5, resolution_mm=2, birads_category='B'):
         self.freq = freq_ghz * 1e9
         self.c = 3e8
         self.lambda0 = self.c / self.freq
         self.res = resolution_mm / 1000.0
+        self.resolution_mm = resolution_mm
+        self.px_per_mm = 1.0 / resolution_mm  # Пикселей в 1 мм
         self.tumor_center = None
         self.birads_category = birads_category
         
@@ -24,59 +24,55 @@ class BreastRadiometryModelReal:
             'D': (0.76, 0.90)
         }
         
-        self.temp_vmin = temp_vmin if temp_vmin is not None else 33.0
-        self.temp_vmax = temp_vmax if temp_vmax is not None else 40.0
-        
-        # В __init__ замените tissue_props на:
         self.tissue_props = {
             'fat': {
-                'mean_eps': 5.0, 'std_eps': 0.5,  # 🔥 Жир: ε≈5 → emissivity≈0.84
-                'mean_cond': 0.10, 'std_cond': 0.03,
+                'mean_eps': 10.5, 'std_eps': 1.5, 
+                'mean_cond': 0.15, 'std_cond': 0.05, 
                 'temp_base': 35.0, 'temp_offset': 0.0
             },
             'fat_subcutaneous': {
-                'mean_eps': 4.5, 'std_eps': 0.4,  # 🔥 Ещё ниже
-                'mean_cond': 0.08, 'std_cond': 0.02,
+                'mean_eps': 9.5, 'std_eps': 1.2, 
+                'mean_cond': 0.12, 'std_cond': 0.04, 
                 'temp_base': 34.8, 'temp_offset': 0.0
             },
             'fat_retromammary': {
-                'mean_eps': 5.0, 'std_eps': 0.5,
-                'mean_cond': 0.10, 'std_cond': 0.03,
+                'mean_eps': 10.0, 'std_eps': 1.3, 
+                'mean_cond': 0.14, 'std_cond': 0.04, 
                 'temp_base': 35.0, 'temp_offset': 0.0
             },
             'gland': {
-                'mean_eps': 45.0, 'std_eps': 5.0,  # Железа: ε≈45
-                'mean_cond': 2.4, 'std_cond': 0.4,
+                'mean_eps': 48.0, 'std_eps': 6.0, 
+                'mean_cond': 2.6, 'std_cond': 0.4, 
                 'temp_base': 35.0, 'temp_offset': 0.8
             },
             'gland_ducts': {
-                'mean_eps': 48.0, 'std_eps': 5.0,
-                'mean_cond': 2.8, 'std_cond': 0.5,
+                'mean_eps': 52.0, 'std_eps': 5.0, 
+                'mean_cond': 3.0, 'std_cond': 0.5, 
                 'temp_base': 35.0, 'temp_offset': 1.0
             },
             'connective': {
-                'mean_eps': 30.0, 'std_eps': 4.0,  # 🔥 Ниже
-                'mean_cond': 1.3, 'std_cond': 0.3,
+                'mean_eps': 35.0, 'std_eps': 4.0, 
+                'mean_cond': 1.5, 'std_cond': 0.3, 
                 'temp_base': 35.0, 'temp_offset': 0.3
             },
             'tumor': {
-                'mean_eps': 55.0, 'std_eps': 7.0,
-                'mean_cond': 4.0, 'std_cond': 0.8,
+                'mean_eps': 58.0, 'std_eps': 8.0, 
+                'mean_cond': 4.2, 'std_cond': 0.8, 
                 'temp_base': 38.0, 'temp_offset': 0.0
             },
             'nipple': {
-                'mean_eps': 45.0, 'std_eps': 5.0,
-                'mean_cond': 2.6, 'std_cond': 0.5,
+                'mean_eps': 52.0, 'std_eps': 5.0, 
+                'mean_cond': 3.0, 'std_cond': 0.5, 
                 'temp_base': 35.0, 'temp_offset': 0.6
             },
             'body': {
-                'mean_eps': 50.0, 'std_eps': 5.0,
-                'mean_cond': 2.0, 'std_cond': 0.3,
+                'mean_eps': 50.0, 'std_eps': 5.0, 
+                'mean_cond': 2.0, 'std_cond': 0.3, 
                 'temp_base': 35.0, 'temp_offset': 0.0
             },
             'skin': {
-                'mean_eps': 35.0, 'std_eps': 4.0,
-                'mean_cond': 1.0, 'std_cond': 0.2,
+                'mean_eps': 38.0, 'std_eps': 4.0, 
+                'mean_cond': 1.2, 'std_cond': 0.2, 
                 'temp_base': 33.8, 'temp_offset': 0.0
             }
         }
@@ -88,14 +84,7 @@ class BreastRadiometryModelReal:
         temp_map = np.ones(shape) * props['temp_base']
         return eps_map, cond_map, temp_map, props['temp_offset']
 
-    def create_anatomical_phantom(self, shape=(160, 200), tumor_radius=12, tumor_pos=None):
-        """
-        Создание фантома с ВЫСОКИМ РАЗРЕШЕНИЕМ.
-        shape: (height, width) в пикселях
-        tumor_radius: масштабированное значение (пропорционально разрешению)
-        """
-        start_time = time.time()
-        
+    def create_anatomical_phantom(self, shape=(200, 250), tumor_radius=8, tumor_pos=None):
         h, w = shape
         eps_map = np.zeros(shape)
         cond_map = np.zeros(shape)
@@ -106,19 +95,16 @@ class BreastRadiometryModelReal:
         y, x = np.ogrid[:h, :w]
         center_x = w / 2.0
         
-        # 🔥 МАСШТАБИРУЕМЫЕ ПАРАМЕТРЫ (пропорционально разрешению)
-        scale_factor = h / 80.0  # Базовое разрешение было 80
-        
-        print(f"🔍 Разрешение: {w}×{h} пикселей (масштаб: {scale_factor:.2f}×)")
-        
-        # 1. ФОРМА ГРУДИ
+        # =====================================================================
+        # 1. ФОРМА ГРУДИ (Масштабируемые параметры)
+        # =====================================================================
+        # Пропорции от высоты/ширины остаются, но сглаживание зависит от разрешения
         top_y = int(h * 0.12)
         breast_width_top = w * 0.06
         breast_width_mid = w * 0.35
         breast_width_base = w * 0.55
         
         breast_mask = np.zeros(shape, dtype=bool)
-        
         for yi in range(top_y, h):
             normalized_y = (yi - top_y) / (h - top_y)
             if normalized_y < 0.25:
@@ -130,53 +116,76 @@ class BreastRadiometryModelReal:
             
             x_left = int(center_x - width_factor)
             x_right = int(center_x + width_factor)
-            x_left = max(0, x_left)
-            x_right = min(w, x_right)
-            breast_mask[yi, x_left:x_right] = True
+            breast_mask[yi, max(0, x_left):min(w, x_right)] = True
         
-        # 🔥 Масштабируем сглаживание формы
-        breast_mask = binary_dilation(breast_mask, iterations=max(1, int(2 * scale_factor)))
-        breast_mask = gaussian_filter(breast_mask.astype(float), sigma=0.8 * scale_factor) > 0.5
+        # Сглаживание формы: sigma должен быть в мм, переведенный в пиксели
+        # 1 мм сглаживания для любой сетки
+        smooth_sigma_px = max(1, int(1.0 * self.px_per_mm)) 
+        breast_mask = binary_dilation(breast_mask, iterations=1)
+        breast_mask = gaussian_filter(breast_mask.astype(float), sigma=smooth_sigma_px) > 0.5
         
-        # 2. СОСОК
+        # =====================================================================
+        # 2. СОСОК (Физические размеры)
+        # =====================================================================
         nipple_center_y = int(h * 0.15)
         nipple_center_x = int(w / 2.0)
-        areola_radius = int(w * 0.10)
-        nipple_radius = int(w * 0.04)
+        
+        # Ареола ~10-15 мм, Сосок ~4-5 мм
+        areola_radius_mm = 12.0
+        nipple_radius_mm = 4.5
+        areola_radius = int(areola_radius_mm * self.px_per_mm)
+        nipple_radius = int(nipple_radius_mm * self.px_per_mm)
         
         areola_mask = (x - nipple_center_x)**2 + (y - nipple_center_y)**2 <= areola_radius**2
         areola_mask = areola_mask & breast_mask
-        
         nipple_mask = (x - nipple_center_x)**2 + (y - nipple_center_y)**2 <= nipple_radius**2
         nipple_mask = nipple_mask & areola_mask
         
-        # 3. СЛОИ
-        skin_thickness = max(2, int(2 * scale_factor))
-        breast_boundary = binary_erosion(breast_mask, iterations=skin_thickness) ^ breast_mask
+        # =====================================================================
+        # 3. СЛОИ (Физическая толщина)
+        # =====================================================================
+        # Кожа: 2-3 мм (анатомическая норма)
+        skin_thickness_mm = 2.5
+        skin_thickness_px = max(1, int(skin_thickness_mm * self.px_per_mm))
+        
+        breast_boundary = binary_erosion(breast_mask, iterations=skin_thickness_px) ^ breast_mask
         skin_mask = breast_boundary & breast_mask
         
-        subcut_thickness = max(4, int(h * 0.06))
-        subcutaneous_mask = binary_erosion(breast_mask, iterations=skin_thickness)
-        subcutaneous_mask = binary_erosion(subcutaneous_mask, iterations=subcut_thickness) ^ binary_erosion(breast_mask, iterations=skin_thickness)
+        # Подкожный жир: 5-10 мм
+        subcut_thickness_mm = 8.0
+        subcut_thickness_px = max(2, int(subcut_thickness_mm * self.px_per_mm))
+        
+        subcutaneous_mask = binary_erosion(breast_mask, iterations=skin_thickness_px)
+        subcutaneous_mask = binary_erosion(subcutaneous_mask, iterations=subcut_thickness_px) ^ \
+                            binary_erosion(breast_mask, iterations=skin_thickness_px)
         subcutaneous_mask = subcutaneous_mask & breast_mask & ~skin_mask
         
+        # Ретромаммарная зона
         retro_y_start = int(h * 0.65)
         retromammary_mask = (y >= retro_y_start) & breast_mask & ~skin_mask & ~subcutaneous_mask
         
+        # Железистая зона (остаток)
         glandular_mask = breast_mask & ~skin_mask & ~subcutaneous_mask & ~retromammary_mask & ~areola_mask
         
+        # Тело (переход к грудной стенке)
         body_transition_y = int(h * 0.75)
         body_mask = (y >= body_transition_y) & breast_mask
         
-        # 4. НЕОДНОРОДНАЯ СТРУКТУРА
+        # =====================================================================
+        # 4. НЕОДНОРОДНАЯ СТРУКТУРА (Масштабирование количества и размера)
+        # =====================================================================
         density_range = self.birads_density[self.birads_category]
         target_gland_fraction = np.random.uniform(density_range[0], density_range[1])
         
         print(f"📊 BI-RADS категория: {self.birads_category}")
         print(f"   Целевая доля железистой ткани: {target_gland_fraction*100:.1f}%")
+        print(f"   Разрешение: {self.resolution_mm} мм/пиксель (всего пикселей: {h*w})")
         
-        # 🔥 Масштабируем количество структур
-        n_lobes = np.random.randint(15, 21)
+        # Количество долек зависит от площади груди, а не фиксировано
+        breast_area_mm2 = np.sum(breast_mask) * (self.resolution_mm ** 2)
+        n_lobes = max(15, int(breast_area_mm2 / 400))  # 1 долька на ~400 мм²
+        n_lobes = min(n_lobes, 60)  # Ограничение сверху
+        
         lobe_mask = np.zeros(shape, dtype=bool)
         gland_center_y = int(h * 0.45)
         gland_center_x = int(w / 2.0)
@@ -194,23 +203,32 @@ class BreastRadiometryModelReal:
             sector_mask = sector_mask & (dist_from_center < w * 0.4)
             lobe_mask = lobe_mask | sector_mask
         
-        # 🔥 Масштабируем количество долек
+        # Дольки второго порядка (пропорционально площади долек)
         n_lobules = int(np.sum(lobe_mask) * 0.003)
         lobule_mask = np.zeros(shape, dtype=bool)
         lobule_indices = np.where(lobe_mask)
+        
+        # Размер дольки в мм (3-6 мм)
+        lobule_size_mm = 4.5
+        lobule_size_px = max(2, int(lobule_size_mm * self.px_per_mm))
+        
         for _ in range(n_lobules):
             if len(lobule_indices[0]) == 0:
                 break
             idx = np.random.randint(0, len(lobule_indices[0]))
             cy, cx = lobule_indices[0][idx], lobule_indices[1][idx]
-            lobule_size = max(4, int(np.random.randint(4, 10) * scale_factor))
             yy, xx = np.ogrid[:h, :w]
-            lobule_region = (xx - cx)**2 + (yy - cy)**2 <= lobule_size**2
+            lobule_region = (xx - cx)**2 + (yy - cy)**2 <= lobule_size_px**2
             lobule_mask = lobule_mask | (lobule_region & lobe_mask)
         
-        # 🔥 Масштабируем протоки
-        n_ducts = min(n_lobes, 12)
+        # Протоки (количество зависит от долек)
+        n_ducts = min(n_lobes, 20)
         duct_mask = np.zeros(shape, dtype=bool)
+        
+        # Толщина протока ~1-2 мм
+        duct_radius_mm = 1.5
+        duct_radius_px = max(1, int(duct_radius_mm * self.px_per_mm))
+        
         for i in range(n_ducts):
             angle = (2 * np.pi * i) / n_ducts + np.random.uniform(-0.2, 0.2)
             t = np.linspace(0, 1, 100)
@@ -218,26 +236,34 @@ class BreastRadiometryModelReal:
                 px = int(nipple_center_x + ti * (w * 0.35) * np.cos(angle))
                 py = int(nipple_center_y + ti * (h * 0.4) * np.sin(angle))
                 if 0 <= px < w and 0 <= py < h:
-                    duct_radius = max(3, int(3 * scale_factor))
-                    duct_region = (x - px)**2 + (y - py)**2 <= duct_radius**2
+                    duct_region = (x - px)**2 + (y - py)**2 <= duct_radius_px**2
                     duct_mask = duct_mask | (duct_region & glandular_mask)
         
-        # 🔥 Масштабируем соединительную ткань
+        # Соединительная ткань (волокна)
+        # Плотность волокон на см²
+        n_fibers = int(breast_area_mm2 / 100)  # 1 волокно на 100 мм²
+        n_fibers = min(n_fibers, 200)
+        
         connective_mask = np.zeros(shape, dtype=bool)
-        n_fibers = max(60, int(60 * scale_factor))
+        
+        # Толщина волокна ~0.5-1 мм
+        fiber_radius_mm = 0.8
+        fiber_radius_px = max(1, int(fiber_radius_mm * self.px_per_mm))
+        fiber_length_mm = 15.0
+        fiber_length_px = max(5, int(fiber_length_mm * self.px_per_mm))
+        
         for _ in range(n_fibers):
             fy = np.random.randint(top_y, h)
             fx = np.random.randint(int(center_x - breast_width_base), int(center_x + breast_width_base))
-            fiber_length = max(10, int(np.random.randint(10, 25) * scale_factor))
             fiber_angle = np.random.uniform(0, 2*np.pi)
-            for l in range(fiber_length):
+            for l in range(fiber_length_px):
                 px = int(fx + l * np.cos(fiber_angle))
                 py = int(fy + l * np.sin(fiber_angle))
                 if 0 <= px < w and 0 <= py < h:
-                    fiber_radius = max(2, int(2 * scale_factor))
-                    fiber_region = (x - px)**2 + (y - py)**2 <= fiber_radius**2
+                    fiber_region = (x - px)**2 + (y - py)**2 <= fiber_radius_px**2
                     connective_mask = connective_mask | (fiber_region & glandular_mask)
         
+        # Распределение железистой ткани по плотности
         available_gland_area = np.sum(glandular_mask)
         target_gland_area = int(available_gland_area * target_gland_fraction)
         
@@ -247,23 +273,24 @@ class BreastRadiometryModelReal:
         gland_priority[lobe_mask] = 1
         
         gland_indices = np.where(glandular_mask & (gland_priority > 0))
+        final_gland_mask = np.zeros(shape, dtype=bool)
+        
         if len(gland_indices[0]) > 0:
             priorities = gland_priority[gland_indices]
             sorted_idx = np.argsort(-priorities)
             gland_filled = 0
-            final_gland_mask = np.zeros(shape, dtype=bool)
             for idx in sorted_idx:
                 if gland_filled >= target_gland_area:
                     break
                 gy, gx = gland_indices[0][idx], gland_indices[1][idx]
                 final_gland_mask[gy, gx] = True
                 gland_filled += 1
-            intragland_fat_mask = glandular_mask & ~final_gland_mask
-        else:
-            final_gland_mask = np.zeros(shape, dtype=bool)
-            intragland_fat_mask = glandular_mask
         
-        # 5. ЗАПОЛНЕНИЕ ТКАНЯМИ
+        intragland_fat_mask = glandular_mask & ~final_gland_mask
+        
+        # =====================================================================
+        # 5. ЗАПОЛНЕНИЕ ТКАНЯМИ (Без изменений)
+        # =====================================================================
         tissue_type_map = np.zeros(shape, dtype=int)
         
         if np.any(subcutaneous_mask):
@@ -273,7 +300,7 @@ class BreastRadiometryModelReal:
             temp_map[subcutaneous_mask] = t
             temp_offset_map[subcutaneous_mask] = offset
             tissue_type_map[subcutaneous_mask] = 1
-        
+            
         if np.any(final_gland_mask):
             e, c, t, offset = self.get_tissue_values('gland', np.sum(final_gland_mask))
             eps_map[final_gland_mask] = e
@@ -281,7 +308,7 @@ class BreastRadiometryModelReal:
             temp_map[final_gland_mask] = t
             temp_offset_map[final_gland_mask] = offset
             tissue_type_map[final_gland_mask] = 2
-        
+            
         if np.any(intragland_fat_mask):
             e, c, t, offset = self.get_tissue_values('fat', np.sum(intragland_fat_mask))
             eps_map[intragland_fat_mask] = e
@@ -289,7 +316,7 @@ class BreastRadiometryModelReal:
             temp_map[intragland_fat_mask] = t
             temp_offset_map[intragland_fat_mask] = offset
             tissue_type_map[intragland_fat_mask] = 3
-        
+            
         if np.any(retromammary_mask):
             e, c, t, offset = self.get_tissue_values('fat_retromammary', np.sum(retromammary_mask))
             eps_map[retromammary_mask] = e
@@ -297,7 +324,7 @@ class BreastRadiometryModelReal:
             temp_map[retromammary_mask] = t
             temp_offset_map[retromammary_mask] = offset
             tissue_type_map[retromammary_mask] = 4
-        
+            
         if np.any(connective_mask):
             e, c, t, offset = self.get_tissue_values('connective', np.sum(connective_mask))
             eps_map[connective_mask] = e
@@ -305,7 +332,7 @@ class BreastRadiometryModelReal:
             temp_map[connective_mask] = t
             temp_offset_map[connective_mask] = offset
             tissue_type_map[connective_mask] = 5
-        
+            
         if np.any(duct_mask):
             e, c, t, offset = self.get_tissue_values('gland_ducts', np.sum(duct_mask))
             eps_map[duct_mask] = e
@@ -313,7 +340,7 @@ class BreastRadiometryModelReal:
             temp_map[duct_mask] = t
             temp_offset_map[duct_mask] = offset
             tissue_type_map[duct_mask] = 6
-        
+            
         if np.any(lobule_mask & final_gland_mask):
             temp_offset_map[lobule_mask & final_gland_mask] = 0.9
             tissue_type_map[lobule_mask & final_gland_mask] = 7
@@ -330,7 +357,7 @@ class BreastRadiometryModelReal:
             temp_map[areola_mask] = t
             temp_offset_map[areola_mask] = 0.5
             tissue_type_map[areola_mask] = 9
-        
+            
         if np.any(nipple_mask):
             e, c, t, offset = self.get_tissue_values('nipple', np.sum(nipple_mask))
             eps_map[nipple_mask] = e
@@ -338,7 +365,7 @@ class BreastRadiometryModelReal:
             temp_map[nipple_mask] = t
             temp_offset_map[nipple_mask] = offset
             tissue_type_map[nipple_mask] = 8
-        
+            
         if np.any(skin_mask):
             e, c, t, offset = self.get_tissue_values('skin', np.sum(skin_mask))
             eps_map[skin_mask] = e
@@ -346,7 +373,7 @@ class BreastRadiometryModelReal:
             temp_map[skin_mask] = t
             temp_offset_map[skin_mask] = offset
             tissue_type_map[skin_mask] = 10
-        
+            
         if np.any(body_mask):
             e, c, t, offset = self.get_tissue_values('body', np.sum(body_mask))
             eps_map[body_mask] = e
@@ -355,12 +382,14 @@ class BreastRadiometryModelReal:
             temp_offset_map[body_mask] = offset
             tissue_type_map[body_mask] = 11
         
-        # 6. ТЕМПЕРАТУРНЫЙ ГРАДИЕНТ
+        # =====================================================================
+        # 6. ТЕМПЕРАТУРНЫЙ ГРАДИЕНТ (Сглаживание в мм)
+        # =====================================================================
         dist_from_surface = distance_transform_edt(~breast_mask)
         dist_from_surface = dist_from_surface.astype(float)
         dist_from_surface[~breast_mask] = 0
-        
         max_dist = dist_from_surface[breast_mask].max()
+        
         if max_dist > 0:
             normalized_depth = dist_from_surface / max_dist
         else:
@@ -373,13 +402,15 @@ class BreastRadiometryModelReal:
         noise = np.random.normal(0, 0.08, shape)
         temp_map = temp_map + noise * breast_mask
         
-        # 🔥 Масштабируем сглаживание температуры
-        temp_map = gaussian_filter(temp_map, sigma=max(0.8, 0.8 * scale_factor))
+        # Сглаживание температуры: 1.5 мм физически
+        temp_smooth_sigma_px = max(1, int(1.5 * self.px_per_mm))
+        temp_map = gaussian_filter(temp_map, sigma=temp_smooth_sigma_px)
         temp_map[~breast_mask] = 20.0
         temp_map = np.clip(temp_map, 34.0, 39.5)
-        temp_map[~breast_mask] = 20.0
         
-        # 7. ОПУХОЛЬ
+        # =====================================================================
+        # 7. ОПУХОЛЬ (Размер в мм)
+        # =====================================================================
         self.tumor_center = None
         tumor_ty, tumor_tx = None, None
         
@@ -397,10 +428,8 @@ class BreastRadiometryModelReal:
                         tumor_ty, tumor_tx = y_coords[nearest_idx], x_coords[nearest_idx]
                         print(f"✅ Скорректированная позиция: Y={tumor_ty}, X={tumor_tx}")
                     else:
-                        print("⚠️ Не удалось скорректировать позицию")
                         tumor_pos = None
             else:
-                print(f"⚠️ Позиция ({tumor_ty}, {tumor_tx}) вне сетки! Генерация случайной...")
                 tumor_pos = None
         
         if tumor_pos is None:
@@ -413,166 +442,107 @@ class BreastRadiometryModelReal:
                 print("⚠️ Не удалось найти позицию для опухоли")
                 return eps_map, cond_map, temp_map, breast_mask, areola_mask, nipple_mask, body_mask, tissue_type_map
         
+        # Размер опухоли в мм (например, 10 мм = 1 см)
+        tumor_radius_px = max(3, int(tumor_radius * self.px_per_mm))
+        
         tumor_y, tumor_x = np.ogrid[:h, :w]
         dist_from_tumor = np.sqrt((tumor_x - tumor_tx)**2 + (tumor_y - tumor_ty)**2)
+        tumor_sigma = tumor_radius_px * 1.5
         
-        # 🔥 Масштабируем опухоль
-        tumor_sigma = tumor_radius * 1.5
         tumor_temp_elevation = 2.5 * np.exp(-dist_from_tumor**2 / (2 * tumor_sigma**2))
-        
         temp_map = temp_map + tumor_temp_elevation * breast_mask
         temp_map = np.clip(temp_map, 34.0, 39.5)
-        temp_map = gaussian_filter(temp_map, sigma=max(1.0, 1.0 * scale_factor))
+        
+        # Сглаживание опухоли: 2 мм физически
+        tumor_smooth_sigma_px = max(1, int(2.0 * self.px_per_mm))
+        temp_map = gaussian_filter(temp_map, sigma=tumor_smooth_sigma_px)
         temp_map[~breast_mask] = 20.0
         
-        inflammation_radius = tumor_radius * 3
-        inflammation_effect = 0.5 * np.exp(-dist_from_tumor**2 / (2 * inflammation_radius**2))
+        # Воспаление
+        inflammation_radius_mm = tumor_radius * 3
+        inflammation_radius_px = max(5, int(inflammation_radius_mm * self.px_per_mm))
+        inflammation_effect = 0.5 * np.exp(-dist_from_tumor**2 / (2 * inflammation_radius_px**2))
         temp_map = temp_map + inflammation_effect * breast_mask
         temp_map = np.clip(temp_map, 34.0, 39.5)
         
+        # Диэлектрические свойства опухоли
         tumor_eps_elevation = 15.0 * np.exp(-dist_from_tumor**2 / (2 * tumor_sigma**2))
         eps_map = eps_map + tumor_eps_elevation * breast_mask
-        eps_map = gaussian_filter(eps_map, sigma=max(1.5, 1.5 * scale_factor))
+        
+        eps_smooth_sigma_px = max(1, int(2.0 * self.px_per_mm))
+        eps_map = gaussian_filter(eps_map, sigma=eps_smooth_sigma_px)
         eps_map[~breast_mask] = 1.0
         
         self.tumor_center = (tumor_ty, tumor_tx)
         
-        elapsed = time.time() - start_time
-        print(f"⏱️ Время создания фантома: {elapsed:.2f} сек")
-
         return eps_map, cond_map, temp_map, breast_mask, areola_mask, nipple_mask, body_mask, tissue_type_map
-
+        
+    # ... (остальные методы класса без изменений)
     def compute_sensitivity_kernel(self, mask, ant_pos):
-        """
-        🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Ядро должно видеть ТОЛЬКО ткань
-        """
         h, w = mask.shape
         y, x = np.ogrid[:h, :w]
         dist = np.sqrt((x - ant_pos[1])**2 + (y - ant_pos[0])**2) * self.res
-        
-        # 🔥 Глубина проникновения для 3 ГГц
-        delta_eff = 0.015  # 8 см
-        
-        # 🔥 Гауссово затухание
-        sensitivity = np.exp(-dist**2 / (2 * delta_eff**2))
-        
-        # 🔥 ВАЖНО: Применяем маску ПОСЛЕ затухания, но ДО нормализации
-        sensitivity = sensitivity * mask
-        
-        # 🔥 Направленность: антенна смотрит вглубь ткани (Y+)
-        depth_weight = np.clip(1.0 + (y - ant_pos[0]) / 50.0, 0.5, 2.0)
-        sensitivity = sensitivity * depth_weight * mask  # ✅ mask ещё раз!
-        
+        delta_eff = 0.02
+        sensitivity = np.exp(-dist / delta_eff) * mask
         sum_sens = np.sum(sensitivity)
         if sum_sens > 0:
             return sensitivity / sum_sens
         return sensitivity
 
-    def compute_emissivity(self, eps_map, mask=None):
-        """
-        🔥 ИСПРАВЛЕНО: Реалистичный emissivity для биотканей
-        """
+    def compute_emissivity(self, eps_map):
         sqrt_eps = np.sqrt(np.maximum(eps_map, 1.0))
         gamma = (sqrt_eps - 1.0) / (sqrt_eps + 1.0)
-        emissivity_fresnel = 1.0 - gamma**2
-        
-        # 🔥 Калибровка для 3 ГГц (эмпирическая)
-        # Биоткани имеют эффективный emissivity выше из-за многократных отражений
-        emissivity = 0.88 + 0.11 * (emissivity_fresnel - 0.5) / 0.5
-        emissivity = np.clip(emissivity, 0.92, 0.99)  # ✅ Узкий диапазон
-        
-        # 🔥 ДОБАВИТЬ пространственную вариацию
-        np.random.seed(42)
-        noise = np.random.normal(0, 0.015, emissivity.shape)
-        emissivity = emissivity + noise * mask
-        emissivity = np.clip(emissivity, 0.90, 0.99)
-        
-        return emissivity
+        return 1.0 - gamma**2
 
     def forward_scan(self, eps_map, cond_map, temp_map, mask, scan_positions):
-        """
-        🔥 ИСПРАВЛЕНО: Конвертация °C → Кельвины ПЕРЕД расчётом Tb!
-        """
         measurements = []
         emissivity_avg = []
-        
-        # 🔥 ГЛАВНОЕ ИСПРАВЛЕНИЕ: конвертация в Кельвины!
-        temp_map_kelvin = temp_map + 273.15
-        
-        emissivity = self.compute_emissivity(eps_map, mask)  # ✅ mask передан
-        
         for pos in scan_positions:
             kernel = self.compute_sensitivity_kernel(mask, pos)
-            emissivity_local = np.sum(kernel * emissivity)
-            emissivity_avg.append(emissivity_local)
-            
-            Tb = np.sum(kernel * emissivity * temp_map_kelvin)
+            emissivity = self.compute_emissivity(eps_map)
+            emissivity_avg.append(np.sum(kernel * emissivity))
+            Tb = np.sum(kernel * temp_map * emissivity)
             measurements.append(Tb)
-        
         return np.array(measurements), np.array(emissivity_avg)
 
     def reconstruct_simple(self, measurements, emissivity_avg, scan_positions, shape, mask):
-        """
-        🔥 ИСПРАВЛЕНО: Реконструкция с конвертацией K → °C
-        """
-        recon_field_kelvin = np.zeros(shape)
+        recon_field = np.zeros(shape)
         weight_sum = np.zeros(shape)
         
         for i, pos in enumerate(scan_positions):
             kernel = self.compute_sensitivity_kernel(mask, pos)
-            
-            # 🔥 Emissivity ~0.95, порог 0.5 (не 0.1!)
-            emissivity_corr = emissivity_avg[i] if emissivity_avg[i] > 0.5 else 0.95
-            
-            # Tb в Кельвинах → делим на emissivity
+            emissivity_corr = emissivity_avg[i] if emissivity_avg[i] > 0.1 else 0.5
             Tb_corrected = measurements[i] / emissivity_corr
-            
-            recon_field_kelvin += kernel * Tb_corrected
+            recon_field += kernel * Tb_corrected
             weight_sum += kernel
             
         weight_sum[weight_sum == 0] = 1.0
-        recon_field_kelvin /= weight_sum
-        
-        # 🔥 Конвертация K → °C
-        recon_field = recon_field_kelvin - 273.15
-        
-        # Сглаживание
+        recon_field /= weight_sum
         recon_field = gaussian_filter(recon_field, sigma=2.0)
         
-        # 🔥 Мягкая нормализация
         valid_data = recon_field[mask]
         if len(valid_data) > 0:
-            min_t, max_t = np.percentile(valid_data, [2, 98])
+            min_t, max_t = np.percentile(valid_data, [5, 95])
             if max_t > min_t:
-                recon_field = np.clip(recon_field, min_t - 1, max_t + 1)
+                recon_field = 35.0 + (recon_field - min_t) / (max_t - min_t) * 4.0
         
-        # 🔥 Финальное обрезание
-        recon_field = np.clip(recon_field, self.temp_vmin - 2, self.temp_vmax + 2)
         recon_field[~mask] = np.nan
-        
         return recon_field
+
 # =============================================================================
 # 📊 ФУНКЦИИ ВИЗУАЛИЗАЦИИ (ВСЕ!)
 # =============================================================================
 
-def plot_main_results(temp_true, temp_recon, breast_mask, tumor_center=None, 
-                      areola_mask=None, nipple_mask=None, body_mask=None,
-                      temp_vmin=33.0, temp_vmax=40.0):  # 🔥 Ручные параметры
-    """
-    temp_vmin, temp_vmax: фиксированный диапазон для обоих графиков
-    """
+def plot_main_results(temp_true, temp_recon, breast_mask, tumor_center=None, areola_mask=None, nipple_mask=None, body_mask=None):
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     
-    # --- ГРАФИК 1: Истинное распределение T ---
     temp_display = temp_true.copy()
     temp_display[~breast_mask] = np.nan
+    vmin_true = np.min(temp_true[breast_mask])
+    vmax_true = np.max(temp_true[breast_mask])
     
-    # 🔥 Используем ФИКСИРОВАННЫЙ диапазон (не авто!)
-    im1 = axes[0].imshow(temp_display, cmap='jet', 
-                         vmin=temp_vmin, vmax=temp_vmax, 
-                         interpolation='gaussian')
-    axes[0].set_title(f'Истинное распределение T\n[{temp_vmin:.1f}°C — {temp_vmax:.1f}°C]', 
-                     fontsize=12, fontweight='bold')
+    im1 = axes[0].imshow(temp_display, cmap='jet', vmin=vmin_true, vmax=vmax_true, interpolation='gaussian')
+    axes[0].set_title(f'Истинное распределение T\n[{vmin_true:.1f}°C — {vmax_true:.1f}°C]', fontsize=12, fontweight='bold')
     
     if nipple_mask is not None:
         axes[0].contour(nipple_mask, colors='darkred', linewidths=3, alpha=0.9)
@@ -580,47 +550,33 @@ def plot_main_results(temp_true, temp_recon, breast_mask, tumor_center=None,
         axes[0].contour(areola_mask, colors='coral', linewidths=2, alpha=0.7)
     
     if tumor_center:
-        axes[0].plot(tumor_center[1], tumor_center[0], 'r+', markersize=15, 
-                    markeredgewidth=2, label='Опухоль')
+        axes[0].plot(tumor_center[1], tumor_center[0], 'r+', markersize=15, markeredgewidth=2, label='Опухоль')
         axes[0].legend(loc='lower right')
     
     cbar1 = plt.colorbar(im1, ax=axes[0], label='Температура (°C)')
-    cbar1.set_ticks(np.linspace(temp_vmin, temp_vmax, 8))  # 🔥 8 делений
+    cbar1.set_ticks(np.linspace(vmin_true, vmax_true, 6))
     
-    # --- ГРАФИК 2: Реконструированное T ---
     temp_recon_display = temp_recon.copy()
     temp_recon_display[~breast_mask] = np.nan
+    vmin_recon = np.nanmin(temp_recon_display)
+    vmax_recon = np.nanmax(temp_recon_display)
     
-    # 🔥 Тот же диапазон для сравнения!
-    im2 = axes[1].imshow(temp_recon_display, cmap='jet', 
-                         vmin=temp_vmin, vmax=temp_vmax, 
-                         interpolation='gaussian')
-    axes[1].set_title(f'Реконструированное T\n[{temp_vmin:.1f}°C — {temp_vmax:.1f}°C]', 
-                     fontsize=12, fontweight='bold')
+    im2 = axes[1].imshow(temp_recon_display, cmap='jet', vmin=vmin_recon, vmax=vmax_recon, interpolation='gaussian')
+    axes[1].set_title(f'Реконструированное T\n[{vmin_recon:.1f}°C — {vmax_recon:.1f}°C]', fontsize=12, fontweight='bold')
     
     if tumor_center:
-        axes[1].plot(tumor_center[1], tumor_center[0], 'r+', markersize=15, 
-                    markeredgewidth=2)
+        axes[1].plot(tumor_center[1], tumor_center[0], 'r+', markersize=15, markeredgewidth=2)
     
     cbar2 = plt.colorbar(im2, ax=axes[1], label='Температура (°C)')
-    cbar2.set_ticks(np.linspace(temp_vmin, temp_vmax, 8))
+    cbar2.set_ticks(np.linspace(vmin_recon, vmax_recon, 6))
     
-    # 🔥 Проверка на артефакты
-    recon_valid = temp_recon[breast_mask]
-    if np.any(recon_valid < temp_vmin) or np.any(recon_valid > temp_vmax):
-        print(f"⚠️ ВНИМАНИЕ: Обнаружены значения вне диапазона!")
-        print(f"   Мин: {np.nanmin(recon_valid):.2f}°C, Макс: {np.nanmax(recon_valid):.2f}°C")
-    
-    # --- ГРАФИК 3: Абсолютная ошибка ---
     diff = np.abs(temp_true - temp_recon)
     diff[~breast_mask] = np.nan
     vmin_err = 0
-    vmax_err = min(3.0, np.nanmax(diff))  # 🔥 Максимум 3°C для ошибки
+    vmax_err = np.nanmax(diff)
     
-    im3 = axes[2].imshow(diff, cmap='magma', vmin=vmin_err, vmax=vmax_err, 
-                         interpolation='gaussian')
-    axes[2].set_title(f'Абсолютная ошибка\n[{vmin_err:.1f}°C — {vmax_err:.1f}°C]', 
-                     fontsize=12, fontweight='bold')
+    im3 = axes[2].imshow(diff, cmap='magma', vmin=vmin_err, vmax=vmax_err, interpolation='gaussian')
+    axes[2].set_title(f'Абсолютная ошибка\n[{vmin_err:.1f}°C — {vmax_err:.1f}°C]', fontsize=12, fontweight='bold')
     
     cbar3 = plt.colorbar(im3, ax=axes[2], label='Ошибка (°C)')
     cbar3.set_ticks(np.linspace(vmin_err, vmax_err, 5))
@@ -630,8 +586,8 @@ def plot_main_results(temp_true, temp_recon, breast_mask, tumor_center=None,
     plt.show()
     
     print(f"\n📊 Диапазоны температур:")
-    print(f"   Истинное T:     {np.min(temp_true[breast_mask]):.2f} — {np.max(temp_true[breast_mask]):.2f} °C")
-    print(f"   Реконструированное: {np.nanmin(temp_recon[breast_mask]):.2f} — {np.nanmax(temp_recon[breast_mask]):.2f} °C")
+    print(f"   Истинное T:     {vmin_true:.2f} — {vmax_true:.2f} °C (Δ{vmax_true-vmin_true:.2f} °C)")
+    print(f"   Реконструированное: {vmin_recon:.2f} — {vmax_recon:.2f} °C (Δ{vmax_recon-vmin_recon:.2f} °C)")
     print(f"   Ошибка:         {vmin_err:.2f} — {vmax_err:.2f} °C")
 
 
@@ -1079,203 +1035,10 @@ def print_full_statistics(temp_true, temp_recon, breast_mask, Tb_data, Tb_noisy,
     
     print("\n" + "="*70)
 
-
-def simulate_temperature_evolution(model, tumor_growth_rate=0.05, temperature_increase_rate=0.1, 
-                                  num_steps=20, tumor_pos=(89, 100)):
-    """
-    Симуляция эволюции температуры во времени
-    
-    Параметры:
-    - tumor_growth_rate: скорость роста опухоли (радиус в пикселях за шаг)
-    - temperature_increase_rate: скорость увеличения температуры (°C за шаг)
-    - num_steps: количество временных шагов
-    - tumor_pos: начальная позиция опухоли
-    
-    Возвращает:
-    - Список реконструированных температурных карт
-    - Список истинных температурных карт
-    - Список параметров опухоли на каждом шаге
-    """
-    print(f"\n⏳ Начало моделирования эволюции температуры ({num_steps} временных шагов)...")
-    
-    # Сохраняем оригинальные параметры опухоли для сброса
-    original_tumor_eps = model.tissue_props['tumor']['mean_eps']
-    original_tumor_temp = model.tissue_props['tumor']['temp_base']
-    
-    # Списки для сохранения результатов
-    temp_recon_list = []
-    temp_true_list = []
-    tumor_params = []
-    
-    # Начальные параметры опухоли
-    initial_tumor_radius = 8
-    current_tumor_radius = initial_tumor_radius
-    current_tumor_temp = original_tumor_temp
-    
-    for step in range(num_steps):
-        print(f"\n⏱️ Шаг {step+1}/{num_steps}: Радиус опухоли = {current_tumor_radius:.1f}, Температура = {current_tumor_temp:.1f}°C")
-        
-        # Обновляем параметры опухоли
-        model.tissue_props['tumor']['mean_eps'] = original_tumor_eps + (step * 0.3)
-        model.tissue_props['tumor']['temp_base'] = original_tumor_temp + (step * temperature_increase_rate)
-        
-        # Генерация фантома с текущими параметрами опухоли
-        eps_map, cond_map, temp_true, breast_mask, areola_mask, nipple_mask, body_mask, tissue_type_map = model.create_anatomical_phantom(
-            shape=(200, 160), 
-            tumor_radius=current_tumor_radius,
-            tumor_pos=tumor_pos
-        )
-        
-        # Позиции антенн
-        h, w = temp_true.shape
-        scan_y = int(h * 0.45)
-        x_pos = np.linspace(int(w * 0.25), int(w * 0.75), 25, dtype=int)
-        scan_grid = [(scan_y, x) for x in x_pos]
-        
-        # Прямое сканирование
-        Tb_data, emissivity_avg = model.forward_scan(eps_map, cond_map, temp_true, breast_mask, scan_grid)
-        Tb_noisy = Tb_data + np.random.normal(0, 0.50, size=Tb_data.shape)
-        
-        # Реконструкция
-        temp_recon = model.reconstruct_simple(Tb_noisy, emissivity_avg, scan_grid, temp_true.shape, breast_mask)
-        
-        # Сохраняем результаты
-        temp_true_list.append(temp_true)
-        temp_recon_list.append(temp_recon)
-        tumor_params.append({
-            'radius': current_tumor_radius,
-            'temperature': current_tumor_temp,
-            'step': step
-        })
-        
-        # Сохраняем изображение для текущего шага
-        save_step_visualization(step, temp_true, temp_recon, breast_mask, model.tumor_center, 
-                               areola_mask, nipple_mask, body_mask)
-        
-        # Обновляем параметры для следующего шага
-        current_tumor_radius += tumor_growth_rate
-        current_tumor_temp += temperature_increase_rate
-    
-    # Восстанавливаем оригинальные параметры опухоли
-    model.tissue_props['tumor']['mean_eps'] = original_tumor_eps
-    model.tissue_props['tumor']['temp_base'] = original_tumor_temp
-    
-    print(f"\n✅ Моделирование завершено. Создано {num_steps} временных шагов.")
-    return temp_true_list, temp_recon_list, tumor_params
-
-def save_step_visualization(step, temp_true, temp_recon, breast_mask, tumor_center, 
-                           areola_mask, nipple_mask, body_mask):
-    """Сохраняет визуализацию для конкретного временного шага"""
-    # Создаем папку для временных изображений, если её нет
-    import os
-    os.makedirs('time_evolution', exist_ok=True)
-    
-    # 1. Сохраняем истинное распределение температуры
-    plt.figure(figsize=(10, 8))
-    temp_display = temp_true.copy()
-    temp_display[~breast_mask] = np.nan
-    
-    vmin_true = np.min(temp_true[breast_mask])
-    vmax_true = np.max(temp_true[breast_mask])
-    
-    im = plt.imshow(temp_display, cmap='jet', vmin=vmin_true, vmax=vmax_true, interpolation='gaussian')
-    plt.colorbar(im, label='Температура (°C)')
-    
-    if nipple_mask is not None:
-        plt.contour(nipple_mask, colors='darkred', linewidths=3, alpha=0.9)
-    if areola_mask is not None:
-        plt.contour(areola_mask, colors='coral', linewidths=2, alpha=0.7)
-    
-    if tumor_center:
-        plt.plot(tumor_center[1], tumor_center[0], 'r+', markersize=15, markeredgewidth=2, label='Опухоль')
-        plt.legend(loc='lower right')
-    
-    plt.title(f'Истинное распределение T (Шаг {step+1})\n[{vmin_true:.1f}°C — {vmax_true:.1f}°C]', 
-              fontsize=12, fontweight='bold')
-    
-    plt.tight_layout()
-    plt.savefig(f'time_evolution/true_temp_step_{step+1:03d}.png', dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    # 2. Сохраняем реконструированное распределение температуры
-    plt.figure(figsize=(10, 8))
-    temp_recon_display = temp_recon.copy()
-    temp_recon_display[~breast_mask] = np.nan
-    
-    vmin_recon = np.nanmin(temp_recon_display)
-    vmax_recon = np.nanmax(temp_recon_display)
-    
-    im = plt.imshow(temp_recon_display, cmap='jet', vmin=vmin_recon, vmax=vmax_recon, interpolation='gaussian')
-    plt.colorbar(im, label='Температура (°C)')
-    
-    if tumor_center:
-        plt.plot(tumor_center[1], tumor_center[0], 'r+', markersize=15, markeredgewidth=2)
-    
-    plt.title(f'Реконструированное T (Шаг {step+1})\n[{vmin_recon:.1f}°C — {vmax_recon:.1f}°C]', 
-              fontsize=12, fontweight='bold')
-    
-    plt.tight_layout()
-    plt.savefig(f'time_evolution/recon_temp_step_{step+1:03d}.png', dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    # 3. Сохраняем разницу (ошибку)
-    diff = np.abs(temp_true - temp_recon)
-    diff[~breast_mask] = np.nan
-    
-    vmin_err = 0
-    vmax_err = np.nanmax(diff)
-    
-    plt.figure(figsize=(10, 8))
-    im = plt.imshow(diff, cmap='magma', vmin=vmin_err, vmax=vmax_err, interpolation='gaussian')
-    plt.colorbar(im, label='Ошибка (°C)')
-    
-    plt.title(f'Абсолютная ошибка (Шаг {step+1})\n[{vmin_err:.1f}°C — {vmax_err:.1f}°C]', 
-              fontsize=12, fontweight='bold')
-    
-    plt.tight_layout()
-    plt.savefig(f'time_evolution/error_step_{step+1:03d}.png', dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    print(f"   ✅ Сохранено изображение для шага {step+1}")
-
-def create_animation_from_steps():
-    """Создает анимацию из сохраненных временных шагов"""
-    import imageio
-    import glob
-    
-    print("\n🎬 Создание анимации из временных шагов...")
-    
-    # Создаем анимацию для истинных температур
-    true_files = sorted(glob.glob('time_evolution/true_temp_step_*.png'))
-    if true_files:
-        with imageio.get_writer('time_evolution/true_temperature_evolution.gif', mode='I', fps=5) as writer:
-            for filename in true_files:
-                image = imageio.v2.imread(filename)
-                writer.append_data(image)
-        print(f"   ✅ Создана анимация истинных температур (шагов: {len(true_files)})")
-    
-    # Создаем анимацию для реконструированных температур
-    recon_files = sorted(glob.glob('time_evolution/recon_temp_step_*.png'))
-    if recon_files:
-        with imageio.get_writer('time_evolution/recon_temperature_evolution.gif', mode='I', fps=5) as writer:
-            for filename in recon_files:
-                image = imageio.v2.imread(filename)
-                writer.append_data(image)
-        print(f"   ✅ Создана анимация реконструированных температур (шагов: {len(recon_files)})")
-    
-    # Создаем анимацию для ошибок
-    error_files = sorted(glob.glob('time_evolution/error_step_*.png'))
-    if error_files:
-        with imageio.get_writer('time_evolution/error_evolution.gif', mode='I', fps=5) as writer:
-            for filename in error_files:
-                image = imageio.v2.imread(filename)
-                writer.append_data(image)
-        print(f"   ✅ Создана анимация ошибок (шагов: {len(error_files)})")
-
-
 # =============================================================================
 # 🚀 ОСНОВНАЯ ПРОГРАММА
 # =============================================================================
+
 if __name__ == "__main__":
     try:
         plt.style.use('seaborn-v0_8')
@@ -1283,111 +1046,42 @@ if __name__ == "__main__":
         plt.style.use('default')
     
     print("="*70)
-    print("🔬 МОДЕЛЬ РАДИОМЕТРИИ МОЛОЧНОЙ ЖЕЛЕЗЫ (ВЫСОКОЕ РАЗРЕШЕНИЕ)")
+    print("🔬 МОДЕЛЬ РАДИОМЕТРИИ (АНАТОМИЧЕСКИ КОРРЕКТНОЕ РАЗРЕШЕНИЕ)")
     print("="*70)
     
-    # 🔥 ВЫБЕРИТЕ РАЗРЕШЕНИЕ:
-    RESOLUTION_PRESETS = {
-        'low': {'shape': (80, 100), 'tumor_radius': 8, 'resolution_mm': 4},
-        'medium': {'shape': (160, 200), 'tumor_radius': 12, 'resolution_mm': 2},
-        'high': {'shape': (320, 400), 'tumor_radius': 16, 'resolution_mm': 1},
-        'ultra': {'shape': (480, 600), 'tumor_radius': 20, 'resolution_mm': 0.5}
-    }
-    
-    # 🔥 Измените здесь для разного разрешения:
-    quality = 'medium'  # 'low', 'medium', 'high', 'ultra'
-    
-    preset = RESOLUTION_PRESETS[quality]
-    print(f"\n📐 Режим: {quality.upper()} ({preset['shape'][0]}×{preset['shape'][1]} пикселей)")
-    
     birads = 'B'
-    model = BreastRadiometryModelReal(
-        freq_ghz=3.0, 
-        resolution_mm=preset['resolution_mm'], 
-        birads_category=birads
-    )
+    
+    # === ВАРИАНТЫ РАЗРЕШЕНИЯ ===
+    # Низкое: resolution_mm=4, shape=(80, 100)  -> Быстро, пиксельно
+    # Среднее: resolution_mm=2, shape=(150, 180) -> Баланс
+    # Высокое: resolution_mm=1.5, shape=(200, 250) -> Детально, медленно
+    
+    model = BreastRadiometryModelReal(freq_ghz=3.0, resolution_mm=1.5, birads_category=birads)
     
     print("\n📌 Генерация анатомического фантома...")
-    start_total = time.time()
     
-    tumor_position = (int(preset['shape'][0] * 0.56), int(preset['shape'][1] * 0.5))
+    # Координаты опухоли теперь в пикселях сетки
+    tumor_position = (110, 125)
     
     eps_map, cond_map, temp_true, breast_mask, areola_mask, nipple_mask, body_mask, tissue_type_map = model.create_anatomical_phantom(
-        shape=preset['shape'], 
-        tumor_radius=preset['tumor_radius'],
+        shape=(200, 250),
+        tumor_radius=10,  # 10 мм = 1 см (физический размер)
         tumor_pos=tumor_position
     )
     
     h, w = temp_true.shape
-
-    # 🔥 Найти реальную границу груди
-    breast_rows = np.where(breast_mask.any(axis=1))[0]
-    if len(breast_rows) > 0:
-        breast_y_top = breast_rows.min()
-        breast_y_bottom = breast_rows.max()
-        print(f"📏 Границы груди: Y={breast_y_top}-{breast_y_bottom}")
-        
-        # 🔥 Сканировать на 40% глубины (было 30%)
-        scan_y = int(breast_y_top + (breast_y_bottom - breast_y_top) * 0.30)
-        print(f"📍 Позиция сканера: Y={scan_y} (оптимальная глубина)")
-    else:
-        scan_y = int(h * 0.35)
-
-    # 🔥 Шире охват по X (было 0.25-0.75)
-    x_pos = np.linspace(int(w * 0.20), int(w * 0.80), 25, dtype=int)
+    scan_y = int(h * 0.45)
+    
+    # Количество антенн масштабируем под ширину
+    n_antennas = max(25, int(w * model.px_per_mm * 0.15))  # ~1 антенна на 7 мм
+    x_pos = np.linspace(int(w * 0.25), int(w * 0.75), n_antennas, dtype=int)
     scan_grid = [(scan_y, x) for x in x_pos]
-
-
     
     print(f"📡 Количество антенн: {len(scan_grid)}")
     print(f"📍 Позиция сканера: Y={scan_y}")
     
     print("\n📡 Выполнение прямого сканирования...")
     Tb_data, emissivity_avg = model.forward_scan(eps_map, cond_map, temp_true, breast_mask, scan_grid)
-
-    # 🔍 Диагностика Tb по позициям:
-    print("\n🔍 Диагностика Tb по позициям:")
-    for i, (pos, tb) in enumerate(zip(scan_grid, Tb_data)):
-        print(f"   Антенна {i+1:2d}: X={pos[1]:3d}, Tb={tb:.2f} K ({tb-273.15:.2f}°C)")
-
-    print(f"\n   🔴 Мин Tb: {Tb_data.min():.2f} K (позиция {np.argmin(Tb_data)+1})")
-    print(f"   🟢 Макс Tb: {Tb_data.max():.2f} K (позиция {np.argmax(Tb_data)+1})")
-
-    # 🔥 ПРАВИЛЬНАЯ диагностика
-    print("\n🔍 Диагностика Tb (в Кельвинах):")
-    print(f"   Мин Tb: {Tb_data.min():.2f} K ({Tb_data.min() - 273.15:.2f}°C)")
-    print(f"   Макс Tb: {Tb_data.max():.2f} K ({Tb_data.max() - 273.15:.2f}°C)")
-    print(f"   Среднее Tb: {Tb_data.mean():.2f} K ({Tb_data.mean() - 273.15:.2f}°C)")
-    print(f"   Emissivity: {emissivity_avg.mean():.3f} ± {emissivity_avg.std():.3f}")
-
-    # 🔥 ПРАВИЛЬНАЯ проверка (исправьте диапазон!)
-    if Tb_data.min() < 260 or Tb_data.max() > 320:
-        print("   ❌ ВНИМАНИЕ: Tb вне физиологического диапазона (260-320 K)!")
-        print("   ⚠️ Проверьте конвертацию °C → K в forward_scan()!")
-    else:
-        print("   ✅ Tb в физиологическом диапазоне (260-320 K)")
-
-    # Проверка emissivity
-    if emissivity_avg.mean() < 0.90:
-        print("   ⚠️ Emissivity слишком низкий! Проверьте compute_emissivity()")
-    else:
-        print("   ✅ Emissivity в норме (0.90-0.99)")
-
-    # Проверка вариации emissivity
-    if emissivity_avg.std() < 0.01:
-        print("   ⚠️ Emissivity без вариации! Проверьте неоднородность тканей")
-    else:
-        print("   ✅ Emissivity имеет вариацию")
-
-    Tb_noisy = Tb_data + np.random.normal(0, 0.50, size=Tb_data.shape)  # 🔥 Шум 0.5 K
-    
-    print("🔄 Реконструкция температуры...")
-
-
-    temp_recon = model.reconstruct_simple(Tb_noisy, emissivity_avg, scan_grid, temp_true.shape, breast_mask)
-    
-    print("\n📊 Генерация графиков...")
-    
     Tb_noisy = Tb_data + np.random.normal(0, 0.10, size=Tb_data.shape)
     
     print("🔄 Реконструкция температуры...")
@@ -1395,7 +1089,6 @@ if __name__ == "__main__":
     
     print("\n📊 Генерация графиков...")
     
-    # (все функции визуализации из предыдущего кода)
     plot_main_results(temp_true, temp_recon, breast_mask, model.tumor_center, areola_mask, nipple_mask, body_mask)
     plot_tissue_composition(tissue_type_map, breast_mask, areola_mask, nipple_mask, body_mask, birads)
     plot_breast_anatomy(eps_map, breast_mask, areola_mask, nipple_mask, body_mask)
@@ -1410,9 +1103,5 @@ if __name__ == "__main__":
     
     print_full_statistics(temp_true, temp_recon, breast_mask, Tb_data, Tb_noisy, emissivity_avg, eps_map, cond_map, model, tissue_type_map)
     
-    total_elapsed = time.time() - start_total
-    print(f"\n⏱️ Общее время выполнения: {total_elapsed:.2f} сек ({total_elapsed/60:.1f} мин)")
     print("\n✅ Все графики сохранены в файлы 01_*.png ... 11_*.png")
     print("="*70)
-
-    

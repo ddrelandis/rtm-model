@@ -15,20 +15,69 @@ class BreastRadiometryModelReal:
         self.temp_vmax = temp_vmax if temp_vmax is not None else 40.0
         
         self.tissue_props = {
-            'fat': {'mean_eps': 5.0, 'std_eps': 0.5, 'mean_cond': 0.10, 'std_cond': 0.03, 'temp_base': 35.0, 'temp_offset': 0.0},
-            'fat_subcutaneous': {'mean_eps': 4.5, 'std_eps': 0.4, 'mean_cond': 0.08, 'std_cond': 0.02, 'temp_base': 34.8, 'temp_offset': 0.0},
-            'fat_retromammary': {'mean_eps': 5.0, 'std_eps': 0.5, 'mean_cond': 0.10, 'std_cond': 0.03, 'temp_base': 35.0, 'temp_offset': 0.0},
-            'gland': {'mean_eps': 45.0, 'std_eps': 5.0, 'mean_cond': 2.4, 'std_cond': 0.4, 'temp_base': 35.0, 'temp_offset': 0.8},
-            'gland_ducts': {'mean_eps': 48.0, 'std_eps': 5.0, 'mean_cond': 2.8, 'std_cond': 0.5, 'temp_base': 35.0, 'temp_offset': 1.0},
-            'connective': {'mean_eps': 30.0, 'std_eps': 4.0, 'mean_cond': 1.3, 'std_cond': 0.3, 'temp_base': 35.0, 'temp_offset': 0.3},
-            'tumor': {'mean_eps': 55.0, 'std_eps': 7.0, 'mean_cond': 4.0, 'std_cond': 0.8, 'temp_base': 38.0, 'temp_offset': 0.0},
-            'nipple': {'mean_eps': 45.0, 'std_eps': 5.0, 'mean_cond': 2.6, 'std_cond': 0.5, 'temp_base': 35.0, 'temp_offset': 0.6},
-            'body': {'mean_eps': 50.0, 'std_eps': 5.0, 'mean_cond': 2.0, 'std_cond': 0.3, 'temp_base': 35.0, 'temp_offset': 0.0},
-            'skin': {'mean_eps': 35.0, 'std_eps': 4.0, 'mean_cond': 1.0, 'std_cond': 0.2, 'temp_base': 33.8, 'temp_offset': 0.0}
+            'fat': {'mean_eps': 5.0, 
+                    'std_eps': 0.5, 
+                    'mean_cond': 0.10, 
+                    'std_cond': 0.03, 
+                    'temp_base': 35.0, 
+                    'temp_offset': 0.0},
+            'fat_subcutaneous': {'mean_eps': 4.5, 
+                                'std_eps': 0.4, 
+                                'mean_cond': 0.08, 
+                                'std_cond': 0.02, 
+                                'temp_base': 34.8, 
+                                'temp_offset': 0.0},
+            'fat_retromammary': {'mean_eps': 5.0, 
+                                 'std_eps': 0.5, 
+                                 'mean_cond': 0.10, 
+                                 'std_cond': 0.03, 
+                                 'temp_base': 35.0, 
+                                 'temp_offset': 0.0},
+            'gland':            {'mean_eps': 45.0, 
+                                'std_eps': 5.0, 
+                                'mean_cond': 2.4, 
+                                'std_cond': 0.4, 
+                                'temp_base': 35.0, 
+                                'temp_offset': 0.8},
+            'gland_ducts':      {'mean_eps': 48.0, 
+                                'std_eps': 5.0, 
+                                'mean_cond': 2.8, 
+                                'std_cond': 0.5, 
+                                'temp_base': 35.0, 
+                                'temp_offset': 1.0},
+            'connective':       {'mean_eps': 30.0, 
+                                'std_eps': 4.0, 
+                                'mean_cond': 1.3, 
+                                'std_cond': 0.3, 
+                                'temp_base': 35.0, 
+                                'temp_offset': 0.3},
+            'tumor':            {'mean_eps': 55.0, 
+                                'std_eps': 7.0, 
+                                'mean_cond': 4.0, 
+                                'std_cond': 0.8, 
+                                'temp_base': 38.0, 
+                                'temp_offset': 0.0},
+            'nipple':           {'mean_eps': 45.0, 
+                                'std_eps': 5.0, 
+                                'mean_cond': 2.6, 
+                                'std_cond': 0.5, 
+                                'temp_base': 35.0, 
+                                'temp_offset': 0.6},
+            'body':             {'mean_eps': 50.0, 
+                                'std_eps': 5.0, 
+                                'mean_cond': 2.0, 
+                                'std_cond': 0.3, 
+                                'temp_base': 35.0, 
+                                'temp_offset': 0.0},
+            'skin':             {'mean_eps': 35.0, 
+                                'std_eps': 4.0, 
+                                'mean_cond': 1.0, 
+                                'std_cond': 0.2, 
+                                'temp_base': 33.8, 
+                                'temp_offset': 0.0}
         }
 
     def get_tissue_values(self, tissue_type, shape):
-        # 🔥 ИСПРАВЛЕНИЕ: Маппинг числовых ID в строковые ключи словаря
         type_to_key = {
             1: 'fat_subcutaneous',
             2: 'gland',
@@ -36,14 +85,13 @@ class BreastRadiometryModelReal:
             4: 'fat_retromammary',
             5: 'connective',
             6: 'gland_ducts',
-            7: 'gland',      # Дольки наследуют свойства железы
+            7: 'gland',      
             8: 'nipple',
-            9: 'gland',      # Ареола наследует свойства железы
+            9: 'gland',      
             10: 'skin',
             11: 'body'
         }
         
-        # Получаем строковый ключ или используем переданный, если он уже строка
         key = type_to_key.get(tissue_type, tissue_type)
         props = self.tissue_props[key]
         
@@ -102,7 +150,7 @@ class BreastRadiometryModelReal:
         # Неоднородность
         density_range = self.birads_density[self.birads_category]
         target_gland_fraction = np.random.uniform(density_range[0], density_range[1])
-        print(f"📊 BI-RADS категория: {self.birads_category}\n   Целевая доля железистой ткани: {target_gland_fraction*100:.1f}%")
+        print(f"BI-RADS категория: {self.birads_category}\n   Целевая доля железистой ткани: {target_gland_fraction*100:.1f}%")
 
         n_lobes = np.random.randint(15, 21)
         lobe_mask = np.zeros(shape, dtype=bool)
@@ -211,18 +259,18 @@ class BreastRadiometryModelReal:
             tumor_ty, tumor_tx = tumor_pos
             if 0 <= tumor_ty < h and 0 <= tumor_tx < w:
                 if not final_gland_mask[tumor_ty, tumor_tx]:
-                    print(f"⚠️ Позиция ({tumor_ty}, {tumor_tx}) вне железистой ткани! Коррекция...")
+                    print(f"Позиция ({tumor_ty}, {tumor_tx}) вне железистой ткани! Коррекция...")
                     y_coords, x_coords = np.where(final_gland_mask)
                     if len(y_coords) > 0:
                         dists = np.sqrt((y_coords - tumor_ty)**2 + (x_coords - tumor_tx)**2)
                         nearest_idx = np.argmin(dists)
                         tumor_ty, tumor_tx = y_coords[nearest_idx], x_coords[nearest_idx]
-                        print(f"✅ Скорректированная позиция: Y={tumor_ty}, X={tumor_tx}")
+                        print(f"Скорректированная позиция: Y={tumor_ty}, X={tumor_tx}")
                     else:
-                        print("⚠️ Не удалось скорректировать позицию")
+                        print("Не удалось скорректировать позицию")
                         tumor_pos = None
             else:
-                print(f"⚠️ Позиция ({tumor_ty}, {tumor_tx}) вне сетки! Генерация случайной...")
+                print(f"Позиция ({tumor_ty}, {tumor_tx}) вне сетки! Генерация случайной...")
                 tumor_pos = None
 
         if tumor_pos is None:
@@ -230,12 +278,12 @@ class BreastRadiometryModelReal:
             if len(valid_y) > 0:
                 idx = np.random.randint(0, len(valid_y))
                 tumor_ty, tumor_tx = valid_y[idx], valid_x[idx]
-                print(f"🎲 Опухоль создана в случайной позиции: Y={tumor_ty}, X={tumor_tx}")
+                print(f"Опухоль создана в случайной позиции: Y={tumor_ty}, X={tumor_tx}")
             else:
-                print("⚠️ Не удалось найти позицию для опухоли")
+                print("Не удалось найти позицию для опухоли")
                 return eps_map, cond_map, temp_map, breast_mask, areola_mask, nipple_mask, body_mask, tissue_type_map
 
-        print(f"✅ Опухоль создана в заданной позиции: Y={tumor_ty}, X={tumor_tx}")
+        print(f"Опухоль создана в заданной позиции: Y={tumor_ty}, X={tumor_tx}")
         tumor_y, tumor_x = np.ogrid[:h, :w]
         dist_from_tumor = np.sqrt((tumor_x - tumor_tx)**2 + (tumor_y - tumor_ty)**2)
         tumor_sigma = tumor_radius * 1.5
@@ -251,7 +299,7 @@ class BreastRadiometryModelReal:
         eps_map[~breast_mask] = 1.0
         self.tumor_center = (tumor_ty, tumor_tx)
 
-        print(f"⏱️ Время создания фантома: {time.time() - start_time:.2f} сек")
+        print(f"Время создания фантома: {time.time() - start_time:.2f} сек")
         return eps_map, cond_map, temp_map, breast_mask, areola_mask, nipple_mask, body_mask, tissue_type_map
 
     def compute_sensitivity_kernel(self, mask, ant_pos):
