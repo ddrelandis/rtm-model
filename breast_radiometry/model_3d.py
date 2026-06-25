@@ -18,88 +18,156 @@ class BreastRadiometryModel3D:
             # ... можно добавить остальные ткани из твоего 2D кода
         }
 
-    def create_anatomical_phantom(self, shape=(100, 160, 160), tumor_radius=10):
+    def create_anatomical_phantom(self, shape=(100, 160, 160), tumor_radius=10, tumor_pos=None, air_buffer_z=25):
         """
         Создает 3D фантом молочной железы.
         shape: (depth, height, width) - z, y, x
+        tumor_pos: кортеж (z, y, x) или None для случайной позиции
+        air_buffer_z: количество "воздушных" вокселей над грудью (для антенн)
         """
         start_time = time.time()
         d, h, w = shape
-        print(f"🔍 Генерация 3D фантома: {d}x{h}x{w} вокселей")
+        print(f"🔍 Генерация 3D фантома: {d}x{h}x{w} вокселей (буфер: {air_buffer_z})")
 
         # 1. Создаем сетку координат
         z, y, x = np.ogrid[:d, :h, :w]
         
         # 2. Базовая форма груди (полуэллипсоид)
-        # Центр эллипсоида смещаем по Z (глубине) и Y (высоте)
-        center_z, center_y, center_x = d * 0.2, h * 0.5, w * 0.5
+        # ✅ ИСПРАВЛЕНИЕ: Центр груди смещаем вниз, чтобы над ней был буфер для антенн
+        center_z = air_buffer_z + (d - air_buffer_z) * 0.3
+        center_y, center_x = h * 0.5, w * 0.5
         
-        # Радиусы эллипсоида
-        rz, ry, rx = d * 0.8, h * 0.45, w * 0.45
+        rz = (d - air_buffer_z) * 0.7
+        ry, rx = h * 0.45, w * 0.45
         
-        # Уравнение эллипсоида: (z-cz)^2/rz^2 + ... <= 1
         breast_mask = ((z - center_z)**2 / rz**2 + 
                        (y - center_y)**2 / ry**2 + 
                        (x - center_x)**2 / rx**2) <= 1.0
         
-        # Обрезаем "лишнее" сзади (тело) и сверху (воздух), если нужно
-       # Отсекаем заднюю часть по оси Z (глубине) с помощью среза
-        breast_mask[int(d * 0.6):, :, :] = False
+        # Отсекаем заднюю часть по оси Z
+        breast_mask[int(d * 0.85):, :, :] = False
 
-        # 3. Слои кожи (Skin)
-        skin_thickness = max(2, int(2 * (h/160))) # Масштабируем толщину
+        # 3. Слои кожи
+        skin_thickness = max(2, int(2 * (h/160)))
         skin_mask = binary_erosion(breast_mask, iterations=skin_thickness) ^ breast_mask
         inner_breast = binary_erosion(breast_mask, iterations=skin_thickness)
 
-        # 4. Железистая ткань и жир (упрощенно для старта)
-        # В центре больше железистой ткани, по краям - жир
+        # 4. Железистая ткань и жир
         dist_from_center = np.sqrt((y - center_y)**2 + (x - center_x)**2)
         glandular_mask = inner_breast & (dist_from_center < np.mean([ry, rx]) * 0.7)
         fat_mask = inner_breast & ~glandular_mask
 
-        # 5. Опухоль (3D сфера Гаусса)
-        tumor_z, tumor_y, tumor_x = int(d*0.3), int(h*0.5), int(w*0.5) # По центру
+        # 5. Определяем позицию опухоли
+        if tumor_pos is not None:
+            tumor_z, tumor_y, tumor_x = tumor_pos
+            if not (0 <= tumor_z < d and 0 <= tumor_y < h and 0 <= tumor_x < w):
+                print(f"   ⚠️ Позиция опухоли ({tumor_z}, {tumor_y}, {tumor_x}) вне сетки! Генерация случайной...")
+                tumor_pos = None
+            elif not glandular_mask[tumor_z, tumor_y, tumor_x]:
+                print(f"   ⚠️ Позиция ({tumor_z}, {tumor_y}, {tumor_x}) вне железистой ткани! Коррекция...")
+                gz, gy, gx = np.where(glandular_mask)
+                if len(gz) > 0:
+                    dists = np.sqrt((gz - tumor_z)**2 + (gy - tumor_y)**2 + (gx - tumor_x)**2)
+                    nearest_idx = np.argmin(dists)
+                    tumor_z, tumor_y, tumor_x = gz[nearest_idx], gy[nearest_idx], gx[nearest_idx]
+                    print(f"   ✅ Скорректированная позиция: Z={tumor_z}, Y={tumor_y}, X={tumor_x}")
+                else:
+                    print("   ❌ Не удалось скорректировать позицию. Генерация случайной...")
+                    tumor_pos = None
+        
+        if tumor_pos is None:
+            valid_z, valid_y, valid_x = np.where(
+                glandular_mask & (z > air_buffer_z) & (z < d*0.6)
+            )
+            if len(valid_z) > 0:
+                idx = np.random.randint(0, len(valid_z))
+                tumor_z, tumor_y, tumor_x = valid_z[idx], valid_y[idx], valid_x[idx]
+                print(f"   🎯 Опухоль создана в случайной позиции: Z={tumor_z}, Y={tumor_y}, X={tumor_x}")
+            else:
+                print("   ❌ Не удалось найти позицию для опухоли")
+                tumor_z, tumor_y, tumor_x = int(center_z), int(center_y), int(center_x)
+                print(f"   🎯 Используем центр груди: Z={tumor_z}, Y={tumor_y}, X={tumor_x}")
+        else:
+            print(f"   🎯 Опухоль создана в заданной позиции: Z={tumor_z}, Y={tumor_y}, X={tumor_x}")
+
+        # 6. Создаем маску опухоли
         dist_to_tumor = np.sqrt((z - tumor_z)**2 + (y - tumor_y)**2 + (x - tumor_x)**2)
         tumor_mask = dist_to_tumor <= tumor_radius
         
-        # 6. Заполнение массивов значениями
+        # 7. Заполнение массивов
         eps_map = np.zeros(shape, dtype=np.float32)
         cond_map = np.zeros(shape, dtype=np.float32)
         temp_map = np.zeros(shape, dtype=np.float32)
         
-        # Базовые значения (фон/воздух)
         eps_map[:] = 1.0
         temp_map[:] = 20.0
         
-        # Жиры
         if np.any(fat_mask):
             eps_map[fat_mask] = np.random.normal(5.0, 0.5, np.sum(fat_mask))
+            cond_map[fat_mask] = np.random.normal(0.10, 0.03, np.sum(fat_mask))
             temp_map[fat_mask] = 35.0
             
-        # Железистая ткань
         if np.any(glandular_mask):
             eps_map[glandular_mask] = np.random.normal(45.0, 5.0, np.sum(glandular_mask))
+            cond_map[glandular_mask] = np.random.normal(2.4, 0.4, np.sum(glandular_mask))
             temp_map[glandular_mask] = 35.5
             
-        # Кожа
         if np.any(skin_mask):
             eps_map[skin_mask] = np.random.normal(35.0, 4.0, np.sum(skin_mask))
+            cond_map[skin_mask] = np.random.normal(1.0, 0.2, np.sum(skin_mask))
             temp_map[skin_mask] = 33.8
             
-        # Опухоль (переписываем значения внутри маски опухоли)
         if np.any(tumor_mask):
             eps_map[tumor_mask] = np.random.normal(55.0, 7.0, np.sum(tumor_mask))
-            # Температура опухоли выше + градиент от центра
+            cond_map[tumor_mask] = np.random.normal(4.0, 0.8, np.sum(tumor_mask))
             temp_map[tumor_mask] = 38.0 + 1.5 * np.exp(-dist_to_tumor[tumor_mask]**2 / (2 * (tumor_radius*0.5)**2))
 
-        # 7. Гладкость (фильтрация)
-        # Важно: sigma должна быть небольшой, чтобы не размыть границы слишком сильно
+        # 8. Температурный градиент
+        dist_from_surface = distance_transform_edt(~breast_mask).astype(np.float32)
+        dist_from_surface[~breast_mask] = 0
+        max_dist = dist_from_surface[breast_mask].max()
+        if max_dist > 0:
+            normalized_depth = dist_from_surface / max_dist
+            temp_map += 1.5 * (normalized_depth ** 0.6) * breast_mask
+        
+        # 9. Воспалительная зона
+        inflammation_radius = tumor_radius * 2.5
+        temp_map += 0.8 * np.exp(-dist_to_tumor**2 / (2 * inflammation_radius**2)) * breast_mask
+
+        # 10. Гладкость
         sigma = max(1.0, 1.0 * (h/160))
         temp_map = gaussian_filter(temp_map, sigma=sigma)
         eps_map = gaussian_filter(eps_map, sigma=sigma)
+        cond_map = gaussian_filter(cond_map, sigma=sigma)
         
-        # Возвращаем маску груди отдельно, чтобы знать, где "ткань", а где "пустота"
+        temp_map[~breast_mask] = 20.0
+        eps_map[~breast_mask] = 1.0
+        cond_map[~breast_mask] = 0.0
+        
+        temp_map = np.clip(temp_map, 34.0, 39.5)
+        
+        print(f"   ✅ Время создания фантома: {time.time() - start_time:.2f} сек")
+        
         return eps_map, cond_map, temp_map, breast_mask, tumor_mask
+
+    def compute_emissivity_3d(self, eps_map, mask):
+        """
+        Расчет коэффициента излучения (emissivity) для 3D объема.
+        Использует формулу Френеля для нормального падения волны.
+        """
+        sqrt_eps = np.sqrt(np.maximum(eps_map, 1.0))
+        gamma = (sqrt_eps - 1.0) / (sqrt_eps + 1.0)
+        emissivity_fresnel = 1.0 - gamma**2
+        
+        # Калибровка в физиологический диапазон (0.90 - 0.99)
+        emissivity = 0.88 + 0.11 * (emissivity_fresnel - 0.5) / 0.5
+        emissivity = np.clip(emissivity, 0.98, 0.99)
+        
+        # Пространственный шум (только внутри ткани)
+        noise = np.random.normal(0, 0.015, emissivity.shape)
+        emissivity = np.clip(emissivity + noise * mask, 0.90, 0.99)
+        
+        return emissivity
 
     def compute_sensitivity_kernel_3d(self, mask, ant_pos_3d):
         """
@@ -131,25 +199,35 @@ class BreastRadiometryModel3D:
             
         return kernel
 
-    def forward_scan_3d(self, temp_map, mask, scan_positions_3d):
+    def forward_scan_3d(self, temp_map, eps_map, mask, scan_positions_3d):
         """
         Прямое сканирование: расчет яркостной температуры (Tb) для каждой антенны.
+        Теперь учитывает emissivity внутри интеграла (как в 2D версии).
         """
         temp_kelvin = temp_map + 273.15
-        Tb_data = []
+        
+        # Вычисляем emissivity для всего объема
+        emissivity = self.compute_emissivity_3d(eps_map, mask)
+        
+        measurements = []
+        emissivity_avg = []
         
         print(f"   📡 Сканирование {len(scan_positions_3d)} антеннами...")
         for i, pos in enumerate(scan_positions_3d):
             kernel = self.compute_sensitivity_kernel_3d(mask, pos)
-            # Интегрирование температуры по объему с весом ядра
-            Tb = np.sum(kernel * temp_kelvin) 
-            Tb_data.append(Tb)
             
-        return np.array(Tb_data)
+            # ✅ ИСПРАВЛЕНИЕ: Emissivity учитывается ВНУТРИ интеграла
+            Tb = np.sum(kernel * emissivity * temp_kelvin)
+            emissivity_avg.append(np.sum(kernel * emissivity))
+            
+            measurements.append(Tb)
+            
+        return np.array(measurements), np.array(emissivity_avg)
 
-    def reconstruct_3d(self, Tb_data, scan_positions_3d, shape, mask):
+    def reconstruct_3d(self, Tb_data, emissivity_avg, scan_positions_3d, shape, mask):
         """
         3D Реконструкция методом обратного проецирования (Back-projection).
+        Теперь корректно учитывает emissivity.
         """
         recon_kelvin = np.zeros(shape, dtype=np.float32)
         weight_sum = np.zeros(shape, dtype=np.float32)
@@ -157,7 +235,13 @@ class BreastRadiometryModel3D:
         print(f"   🔄 Реконструкция 3D объема...")
         for i, pos in enumerate(scan_positions_3d):
             kernel = self.compute_sensitivity_kernel_3d(mask, pos)
-            recon_kelvin += kernel * Tb_data[i]
+            
+            # Коррекция на emissivity (как в 2D версии)
+            emissivity_corr = emissivity_avg[i] if emissivity_avg[i] > 0.5 else 0.95
+            Tb_corrected = Tb_data[i] / emissivity_corr
+            
+            # Каждая антенна "размазывает" свое измерение обратно в объем
+            recon_kelvin += kernel * Tb_corrected
             weight_sum += kernel
             
         # Избегаем деления на ноль
@@ -166,10 +250,10 @@ class BreastRadiometryModel3D:
         # Переводим обратно в Цельсии
         recon_celsius = (recon_kelvin / weight_sum) - 273.15
         
-        # ✅ ИСПРАВЛЕНИЕ: Сглаживаем ДО обнуления воздуха, чтобы NaN не расплывались!
+        # Сглаживаем ДО обнуления воздуха
         recon_celsius = gaussian_filter(recon_celsius, sigma=1.5)
         
-        # ✅ ТЕПЕРЬ обнуляем воздух
+        # Обнуляем воздух
         recon_celsius[~mask] = np.nan 
         
         return recon_celsius
