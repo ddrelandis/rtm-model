@@ -26,12 +26,12 @@ QUALITY_PRESETS = {
 }
 
 # Основные параметры запуска
-QUALITY = 'medium'              # low / medium / high / ultra
+QUALITY = 'high'              # low / medium / high / ultra
 BI_RADS = 'B'                   # A / B / C / D (плотность ткани)
 ANTENNA_LAYOUT = 'hemisphere'   # planar / ring / hemisphere / dual / manual
 ADD_NOISE = True                # Добавить шум в измерения (как в реальном приборе)
-NOISE_STD_K = 0.05              # Стандартное отклонение шума (в Кельвинах)
-SAVE_SCREENSHOTS = False        # Сохранять скриншоты PyVista
+NOISE_STD_K = 0.1             # Стандартное отклонение шума (в Кельвинах)
+SAVE_SCREENSHOTS = True        # Сохранять скриншоты PyVista
 OUTPUT_DIR = 'data_3d'          # Папка для сохранения результатов
 
 # Позиция опухоли (z, y, x) — None = случайная
@@ -64,12 +64,10 @@ def compute_emissivity_3d(eps_map, mask):
     return emissivity
 
 
-def validate_antenna_positions(scan_positions, shape, mask, search_radius=5):
+def validate_antenna_positions(scan_positions, shape, mask, search_radius=10):
     """
-    Проверяет позиции антенн:
-    - Не выходят ли за границы сетки
-    - Находятся ли на ткани (или рядом)
-    Если антенна вне ткани — ищет ближайший воксель ткани в радиусе search_radius.
+    Упрощенная валидация: разрешаем антеннам быть в воздухе,
+    если они находятся в пределах сетки и "смотрят" на ткань.
     """
     d, h, w = shape
     valid_positions = []
@@ -77,40 +75,17 @@ def validate_antenna_positions(scan_positions, shape, mask, search_radius=5):
     for pos in scan_positions:
         z, y, x = int(pos[0]), int(pos[1]), int(pos[2])
         
-        # Проверка границ
+        # Проверка границ сетки
         if not (0 <= z < d and 0 <= y < h and 0 <= x < w):
             print(f"   ⚠️ Позиция ({z}, {y}, {x}) вне сетки. Пропущено.")
             continue
         
-        # Если на ткани — ок
-        if mask[z, y, x]:
-            valid_positions.append((z, y, x))
-            continue
-        
-        # Ищем ближайшую ткань в радиусе
-        found = False
-        for r in range(1, search_radius + 1):
-            for dz in range(-r, r + 1):
-                for dy in range(-r, r + 1):
-                    for dx in range(-r, r + 1):
-                        nz, ny, nx = z + dz, y + dy, x + dx
-                        if (0 <= nz < d and 0 <= ny < h and 0 <= nx < w 
-                            and mask[nz, ny, nx]):
-                            valid_positions.append((nz, ny, nx))
-                            found = True
-                            break
-                    if found:
-                        break
-                if found:
-                    break
-            if found:
-                break
-        
-        if not found:
-            print(f"   ❌ Нет ткани рядом с ({z}, {y}, {x}). Пропущено.")
+        # ✅ ИСПРАВЛЕНИЕ: Разрешаем антенны в воздухе, если они в пределах сетки
+        # Антенна может быть над грудью (в буфере), главное чтобы она "видела" ткань
+        valid_positions.append((z, y, x))
     
+    print(f"   ✅ Принято позиций: {len(valid_positions)} из {len(scan_positions)}")
     return valid_positions
-
 
 def print_3d_statistics(temp_true, temp_recon, breast_mask, tumor_mask,
                         Tb_data, Tb_noisy, emissivity_avg, eps_map, cond_map):
@@ -376,7 +351,7 @@ def run_3d_radiometry():
     elif ANTENNA_LAYOUT == 'ring':
         scan_grid = circular_ring(shape, n_ant=32, radius=55, z_height=-5)
     elif ANTENNA_LAYOUT == 'hemisphere':
-        scan_grid = hemispherical_array(shape, n_theta=5, n_phi=10, radius=70)
+        scan_grid = hemispherical_array(shape, n_theta=7, n_phi=14, radius=55)
     elif ANTENNA_LAYOUT == 'dual':
         scan_grid = dual_plane(shape, n_y=6, n_x=6, z_top=-5, z_bottom=70)
     elif ANTENNA_LAYOUT == 'manual':

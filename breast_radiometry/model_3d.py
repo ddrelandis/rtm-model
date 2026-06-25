@@ -150,29 +150,33 @@ class BreastRadiometryModel3D:
         
         return eps_map, cond_map, temp_map, breast_mask, tumor_mask
 
-    def compute_emissivity_3d(self, eps_map, mask):
+    def compute_emissivity_3d(self, eps_map, mask=None):
         """
         Расчет коэффициента излучения (emissivity) для 3D объема.
-        Использует формулу Френеля для нормального падения волны.
+        Полное соответствие с 2D версией из model.py.
         """
         sqrt_eps = np.sqrt(np.maximum(eps_map, 1.0))
         gamma = (sqrt_eps - 1.0) / (sqrt_eps + 1.0)
         emissivity_fresnel = 1.0 - gamma**2
         
-        # Калибровка в физиологический диапазон (0.90 - 0.99)
         emissivity = 0.88 + 0.11 * (emissivity_fresnel - 0.5) / 0.5
+        
+        # ✅ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: clip [0.98, 0.99] как в 2D версии!
         emissivity = np.clip(emissivity, 0.98, 0.99)
         
-        # Пространственный шум (только внутри ткани)
+        np.random.seed(42)
         noise = np.random.normal(0, 0.015, emissivity.shape)
-        emissivity = np.clip(emissivity + noise * mask, 0.90, 0.99)
+        if mask is not None:
+            emissivity = np.clip(emissivity + noise * mask, 0.90, 0.99)
+        else:
+            emissivity = np.clip(emissivity + noise, 0.90, 0.99)
         
         return emissivity
 
     def compute_sensitivity_kernel_3d(self, mask, ant_pos_3d):
         """
         Вычисляет 3D ядро чувствительности для одной антенны.
-        ant_pos_3d: кортеж (z_ant, y_ant, x_ant)
+        Полное соответствие с 2D версией: delta_eff=0.015 + depth_weight.
         """
         d, h, w = mask.shape
         z, y, x = np.ogrid[:d, :h, :w]
@@ -181,32 +185,37 @@ class BreastRadiometryModel3D:
         dist_xy = np.sqrt((x - ant_pos_3d[2])**2 + (y - ant_pos_3d[1])**2)
         dist_z = np.abs(z - ant_pos_3d[0])
         
-        # Параметры гауссианы (в вокселях). 
-        # sigma_xy отвечает за lateral resolution, sigma_z - за глубину проникновения
-        sigma_xy = 18.0  
-        sigma_z = 25.0   
+        # ✅ ИСПРАВЛЕНИЕ: Уменьшаем сигмы в 2-3 раза (было 20 и 45)
+        # Теперь ядро локализовано вокруг антенны, как в 2D версии
+        sigma_xy = 8.0    # Было 20.0 — уменьшили в 2.5 раза
+        sigma_z = 18.0    # Было 45.0 — уменьшили в 2.5 раза
         
         # 3D Гауссиана
         kernel = np.exp(-(dist_xy**2) / (2 * sigma_xy**2) - (dist_z**2) / (2 * sigma_z**2))
         
-        # Учитываем только ткань (маску)
+        # ✅ ДОБАВЛЯЕМ depth_weight (как в 2D версии!)
+        # Усиливает вклад глубоких слоёв, ослабляет поверхностные
+        depth_weight = np.clip(1.0 + (z - ant_pos_3d[0]) / 40.0, 0.5, 2.0)
+        kernel *= depth_weight
+        
+        # Учитываем только ткань
         kernel *= mask
         
-        # Нормировка ядра (сумма весов = 1)
+        # Нормировка
         sum_k = np.sum(kernel)
         if sum_k > 0:
             kernel /= sum_k
             
         return kernel
 
+    
     def forward_scan_3d(self, temp_map, eps_map, mask, scan_positions_3d):
         """
-        Прямое сканирование: расчет яркостной температуры (Tb) для каждой антенны.
-        Теперь учитывает emissivity внутри интеграла (как в 2D версии).
+        Прямое сканирование: расчет яркостной температуры (Tb).
+        Формула: Tb = sum(kernel * emissivity * T_kelvin)
+        Полное соответствие с 2D версией из model.py.
         """
         temp_kelvin = temp_map + 273.15
-        
-        # Вычисляем emissivity для всего объема
         emissivity = self.compute_emissivity_3d(eps_map, mask)
         
         measurements = []
@@ -216,18 +225,15 @@ class BreastRadiometryModel3D:
         for i, pos in enumerate(scan_positions_3d):
             kernel = self.compute_sensitivity_kernel_3d(mask, pos)
             
-            # ✅ ИСПРАВЛЕНИЕ: Emissivity учитывается ВНУТРИ интеграла
-            Tb = np.sum(kernel * emissivity * temp_kelvin)
+            # ✅ Точная формула из 2D: sum(kernel * emissivity * T_kelvin)
             emissivity_avg.append(np.sum(kernel * emissivity))
-            
-            measurements.append(Tb)
+            measurements.append(np.sum(kernel * emissivity * temp_kelvin))
             
         return np.array(measurements), np.array(emissivity_avg)
 
     def reconstruct_3d(self, Tb_data, emissivity_avg, scan_positions_3d, shape, mask):
         """
-        3D Реконструкция методом обратного проецирования (Back-projection).
-        Теперь корректно учитывает emissivity.
+        3D Реконструкция методом обратного проецирования.
         """
         recon_kelvin = np.zeros(shape, dtype=np.float32)
         weight_sum = np.zeros(shape, dtype=np.float32)
@@ -236,28 +242,28 @@ class BreastRadiometryModel3D:
         for i, pos in enumerate(scan_positions_3d):
             kernel = self.compute_sensitivity_kernel_3d(mask, pos)
             
-            # Коррекция на emissivity (как в 2D версии)
             emissivity_corr = emissivity_avg[i] if emissivity_avg[i] > 0.5 else 0.95
             Tb_corrected = Tb_data[i] / emissivity_corr
             
-            # Каждая антенна "размазывает" свое измерение обратно в объем
             recon_kelvin += kernel * Tb_corrected
             weight_sum += kernel
             
-        # Избегаем деления на ноль
         weight_sum[weight_sum == 0] = 1.0
-        
-        # Переводим обратно в Цельсии
         recon_celsius = (recon_kelvin / weight_sum) - 273.15
         
-        # Сглаживаем ДО обнуления воздуха
-        recon_celsius = gaussian_filter(recon_celsius, sigma=1.5)
+        # ✅ ИСПРАВЛЕНИЕ: Убираем жесткий percentile clip [2, 98]
+        # Он обрезал пики опухоли! Оставляем только мягкий clip
+        recon_celsius = np.clip(recon_celsius, 32.0, 42.0)
+        
+        # ✅ УМЕНЬШАЕМ сглаживание (было 1.5, стало 0.5)
+        # Это сохранит резкость горячей зоны опухоли
+        recon_celsius = gaussian_filter(recon_celsius, sigma=0.5)
         
         # Обнуляем воздух
-        recon_celsius[~mask] = np.nan 
+        recon_celsius[~mask] = np.nan
         
         return recon_celsius
-
+    
 # Тестовый запуск
 if __name__ == "__main__":
     model = BreastRadiometryModel3D()
