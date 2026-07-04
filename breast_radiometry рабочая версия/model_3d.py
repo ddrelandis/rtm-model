@@ -18,7 +18,6 @@ class BreastRadiometryModel3D:
             # ... можно добавить остальные ткани из твоего 2D кода
         }
 
-    
     def create_anatomical_phantom(self, shape=(100, 160, 160), tumor_radius=10, tumor_pos=None, air_buffer_z=25):
         """
         Создает 3D фантом молочной железы.
